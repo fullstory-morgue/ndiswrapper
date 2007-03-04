@@ -1,8 +1,18 @@
 ndiswrapper (1.38-1) unstable; urgency=low
 
   * New upstream release.
+  * Assume maintainership of package as discussed with Andres Salomon.
+    - update debian/control* Maintainer and Uploaders fields
+    - adjust debian/copyright to reflect maintainer status
+  * Add Daniel Baumann to Uploaders fields of debian/control*, he is
+    interested in sponsoring future versions of the ndiswrapper package.
+  * Remove whitespace from tail of debian/changelog.
+  * Prefix hompage url's with Hompage: and indent them with two spaces in
+    debian/control.
+  * Add get-orig-source target to debian/rules.
+  * Add debian/watch file.
 
- -- Kel Modderman <kel@otaku42.de>  Sun,  4 Mar 2007 10:30:51 +1000
+ -- Kel Modderman <kel@otaku42.de>  Sun,  4 Mar 2007 12:05:23 +1000
 
 ndiswrapper (1.37-1) unstable; urgency=low
 
@@ -388,4 +398,3 @@ ndiswrapper (0.4-1) unstable; urgency=low
   * Initial Release.
 
  -- Erik Rigtorp <erik@rigtorp.com>  Mon, 23 Feb 2004 19:19:13 +0100
-
