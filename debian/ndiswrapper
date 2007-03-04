@@ -1,0 +1,19 @@
+#!/bin/sh
+
+set -e
+
+latest_ndiswrapper () {
+	for file in /usr/sbin/ndiswrapper-[\.0-9][\.0-9]*; do
+		echo $file
+	done | sort -n -t - -k 2 | tail -1
+}
+
+unset LATEST
+LATEST=`latest_ndiswrapper`
+
+if [ -x "$LATEST" ]; then
+	$LATEST "$@"
+else
+	echo "Error: no versions of ndiswrapper found!" 1>&2
+	exit 1
+fi

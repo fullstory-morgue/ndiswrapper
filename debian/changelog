@@ -1,0 +1,391 @@
+ndiswrapper (1.38-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Kel Modderman <kel@otaku42.de>  Sun,  4 Mar 2007 10:30:51 +1000
+
+ndiswrapper (1.37-1) unstable; urgency=low
+
+  * New upstream release. (Closes: #410164)
+    - fixes quirks with sis163u ndis driver (Closes: #400320)
+    - compiles against linux 2.6.20+
+  * Reported to be working with Netgear MA111 device again. Thanks for the
+    feedback Bernhard. (Closes: 407182)
+  * Recommend linux-image-_KVERS_ and not the non-existant
+    kernel-image-_KVERS_. (Closes: #388822)
+
+ -- Kel Modderman <kel@otaku42.de>  Thu,  8 Feb 2007 20:42:17 +1000
+
+ndiswrapper (1.36-1) unstable; urgency=low
+
+  * NOT RELEASED.
+  * New upstream release.
+
+ -- Kel Modderman <kel@otaku42.de>  Sat,  3 Feb 2007 00:01:39 +1000
+
+ndiswrapper (1.34-1) unstable; urgency=low
+
+  * NOT RELEASED
+  * New upstream release.
+  * Drop m4 templates, they were littering the diff.gz, and probably required
+    more maintenance burden that the seldom version bump of the utilities that
+    upstream demands.
+  * Update Uploaders email address.
+
+ -- Kel Modderman <kel@otaku42.de>  Fri, 26 Jan 2007 11:35:16 +1000
+
+ndiswrapper (1.30-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Kel Modderman <kelmo@kanotixguide.org>  Tue, 28 Nov 2006 23:44:38 +1000
+
+ndiswrapper (1.28-1) unstable; urgency=low
+
+  [ Kel Modderman ]
+  * New upstream release.
+  * Introduce m4 templates plus maintainer script (m4-control) to make
+    adapting to new upstream ndiswrapper-utils versions easier.
+  * Drop all debhelper files for ndiswrapper-utils-VERS, instead handle the
+    installation of required files in debian/rules only.
+  * Use distclean target in kdist_clean.
+  * Change of co-maintainer email address.
+  * Correctly annotate LGPL licensed portion of upstream files in
+    debian/copyright.
+  * Create /etc/ndiswrapper directory in ndiswrapper-common to stop
+    `ndiswrapper -l' from complaining on first use.
+
+  [ Andres Salomon ]
+  * Ack NMU (closes: #389171).
+  * Drop 01_shut_up_perl_debug.patch.
+
+ -- Kel Modderman <kelmo@kanotixguide.org>  Mon, 30 Oct 2006 17:06:10 +1000
+
+ndiswrapper (1.23-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload, BSP Zurich/Switzerland
+  * Use now "make distclean" instead of "make clean" (Closes: #389171).
+
+ -- Mario Iseli <admin@marioiseli.com>  Sat, 07 Oct 2006 15:31:45 +0200
+
+ndiswrapper (1.23-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Kel Modderman <kelrin@tpg.com.au>  Sat, 12 Aug 2006 21:11:06 +1000
+
+ndiswrapper (1.22-1) unstable; urgency=low
+
+  * New upstream release.
+  * Stop carrying trivial patch series, new upstream changes allow this. Details
+    follow.
+  * Disable simple-patchsys cdbs class.
+  * DIST_DESTDIR can be used in place of INST_DIR in rules.modules, and also
+    disables depmod from being run.
+  * The 'version' file has been removed, utils and driver versions are now
+    defined in driver/ndiswrapper.h. Drop path fixup patch and adjust rules
+    sed line to suit.
+  * Remove custom clean: function in rules, there are no upstream debian files
+    now.
+  * Replace $(cdbs_curpkg) with real package name in debian/rules
+    ndiswrapper-utils target.
+  * Make /usr/sbin/ndiswrapper dash friendly. (Closes: #381544)
+
+ -- Kel Modderman <kelrin@tpg.com.au>  Sun,  6 Aug 2006 01:47:51 +1000
+
+ndiswrapper (1.21-1) unstable; urgency=low
+
+  [Kel Modderman]
+  * New upstream release. (Closes: #379685)
+  * Add myself to Uploaders.
+  * Bump Standards version to 3.7.2, debhelper compat level to 5.
+  * Build depend on debhelper >=5.0.37 and use the dh_installmodules helper
+    instead of the hand crafted postinst.modules.in (Closes: #377058)
+  * Add NEWS file detailing the status of wpa_supplicant with recent
+    ndiswrapper versions. (Closes: #372125)
+  * Slightly modify the short descriptions for the binary packages. This
+    probably does not go as far as the reporter would like, but its an
+    improvement. (Closes: #364848)
+  * Update the long description of the binary packages with the current blurb
+    from the ndiswrapper homepage.
+  * Add upstream URL to long descriptions of the binary packages.
+
+ -- Kel Modderman <kelrin@tpg.com.au>  Wed, 26 Jul 2006 21:43:07 +1000
+
+ndiswrapper (1.18-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Andres Salomon <dilinger@debian.org>  Sat, 01 Jul 2006 23:19:28 +0000
+
+ndiswrapper (1.17-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Andres Salomon <dilinger@debian.org>  Tue, 06 Jun 2006 17:05:30 +0000
+
+ndiswrapper (1.16-1) unstable; urgency=low
+
+  * New upstream release.
+  * Update debian/copyright at Giridhar's request.
+  * Drop postinst script that's meant to handle ndiswrapper < 1.0; 1.1-4
+    is in sarge, so we no longer have to handle older upgrade paths.
+
+ -- Andres Salomon <dilinger@debian.org>  Sun, 14 May 2006 06:50:22 +0000
+
+ndiswrapper (1.15-1) unstable; urgency=low
+
+  * New upstream release (closes: #358421).
+  * Drop ndiswrapper-common's dependency on ndiswrapper-utils-*; that was
+    accidental (closes: #365810).
+  * Drop ndiswrapper-utils, and rename ndiswrapper-utils-1.7 to -1.8.
+  * Override $(KBUILD) when building modules.
+  * Fix typo in README.Debian (closes: #353021).
+
+ -- Andres Salomon <dilinger@debian.org>  Mon, 08 May 2006 00:58:15 -0400
+
+ndiswrapper (1.8-2) unstable; urgency=low
+
+  * Add ndiswrapper-utils-1.7, and make ndiswrapper-utils a
+    dummy/transitional package.  Handle conflicting files
+    w/ wrapper scripts (loadndisdriver) and diversions.
+  * Drop ndiswrapper-buginfo; there are some, er, issues w/ it.
+  * Add ndiswrapper-common, for wrapper scripts.  Throw some manpages
+    in w/ the wrapper scripts.
+  * Update FSF copyright address to make lintian shut up.
+
+ -- Andres Salomon <dilinger@debian.org>  Mon, 17 Apr 2006 16:54:17 -0400
+
+ndiswrapper (1.8-1) unstable; urgency=low
+
+  * New upstream release (closes: #345694).
+ 
+ -- Andres Salomon <dilinger@debian.org>  Fri, 20 Jan 2006 22:30:55 +0000
+
+ndiswrapper (1.5-1) unstable; urgency=low
+
+  * New upstream release (closes: #337024).
+ 
+ -- Andres Salomon <dilinger@debian.org>  Thu, 03 Nov 2005 05:15:30 +0000
+
+ndiswrapper (1.4-1) unstable; urgency=low
+
+  * New upstream release.
+  * Add clean rule to nuke upstream's debian cruft.
+ 
+ -- Andres Salomon <dilinger@debian.org>  Sat, 08 Oct 2005 21:24:07 -0400
+
+ndiswrapper (1.2+1.3rc1-1) unstable; urgency=low
+
+  * New upstream release.
+  * Get rid of some bashisms in various scripts (closes: #307836).
+ 
+ -- Andres Salomon <dilinger@debian.org>  Sun, 28 Aug 2005 04:52:13 -0400
+
+ndiswrapper (1.1-4) unstable; urgency=low
+
+  * Argh, missed a bit w/ amd64 support; it should build now.
+ 
+ -- Andres Salomon <dilinger@debian.org>  Sun, 10 Apr 2005 15:32:12 -0400
+
+ndiswrapper (1.1-3) unstable; urgency=low
+
+  * Fix postinst in cases where an upgrade is being done, but
+    /etc/ndiswrapper/* is empty (or non-existant) (closes: #303992).
+  * Make ndiswrapper-modules' dep on -utils a little less strict.
+ 
+ -- Andres Salomon <dilinger@debian.org>  Sun, 10 Apr 2005 08:05:17 -0400
+
+ndiswrapper (1.1-2) unstable; urgency=low
+
+  * Add amd64 support, by popular request (all 2 of you).
+  * Since there are now multiple architectures; make -source package
+    arch: all.
+ 
+ -- Andres Salomon <dilinger@debian.org>  Fri, 08 Apr 2005 15:09:08 -0400
+
+ndiswrapper (1.1-1) unstable; urgency=low
+
+  * New upstream release; "Breaking Ian's machine" (closes: #300784).
+  * Add /usr/sbin/ndiswrapper-buginfo.
+  * Make generated ndiswrapper-modules package have a versioned depend
+    on ndiswrapper-utils.. Just in case.
+  * Add postinst to ndiswrapper-utils to deal w/ change in config file
+    names.  Sigh.
+  * Change ndiswrapper-modules provide to be versioned, so that
+    ndiswrapper-utils can depend upon specific versions.
+  * Update maintainer address.
+
+ -- Andres Salomon <dilinger@debian.org>  Sat, 26 Mar 2005 03:42:05 -0500
+
+ndiswrapper (0.12+1.0rc2-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Andres Salomon <dilinger@voxel.net>  Sun, 09 Jan 2005 19:40:16 -0500
+
+ndiswrapper (0.12+1.0rc1-1) unstable; urgency=low
+
+  * New upstream release (closes: #286576).
+  * Further cleanups; remove modass override symlink, etc.
+  * Don't background depmod in postinst.
+
+ -- Andres Salomon <dilinger@voxel.net>  Wed, 29 Dec 2004 03:06:16 -0500
+
+ndiswrapper (0.11-1) unstable; urgency=low
+
+  * Initial upload; start w/ Erik Rigtorp's packaging.  Thanks, Erik!
+    (closes: #234644).
+  * New upstream release.
+  * Convert build system to cdbs.
+  * Drop upstream's debian stuff.  No need for the clutter.
+  * Upstream now provides an ndiswrapper(8) manpage; use that.
+  * Fix modass overrides, which was in the wrong package, I think
+    (documentation bug in module-assistant?)
+
+ -- Andres Salomon <dilinger@voxel.net>  Sun, 31 Oct 2004 18:31:40 -0500
+
+ndiswrapper (0.10-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Sun, 22 Aug 2004 21:19:29 +0200
+
+ndiswrapper (0.9-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Thu, 05 Aug 2004 17:37:36 +0200
+
+ndiswrapper (1:0.8-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Thu, 10 Jun 2004 21:53:52 +0200
+
+ndiswrapper (0.8-rc2-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Wed,  2 Jun 2004 02:54:34 +0200
+
+ndiswrapper (0.8-rc1-1) unstable; urgency=low
+
+  * New upstream release
+  * Fixed so that the driver source can be compiled manualy.
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Sun, 30 May 2004 23:05:31 +0200
+
+ndiswrapper (0.7-1) unstable; urgency=low
+
+  * New upstream release
+  * Fix rules file to behave properly when make-kpkg is invoked with
+    --append-to-version.
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Sun, 25 Apr 2004 18:03:45 +0200
+
+ndiswrapper (0.6-2) unstable; urgency=low
+
+  * Fixed a problem with the rules file, dpatch is no longer included when
+    rules is invoked from make-kpkg.
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Wed, 17 Mar 2004 16:11:05 +0100
+
+ndiswrapper (0.6-1) unstable; urgency=low
+
+  * Non-maintainer upload
+  * New upstream release
+  * Removed paths.dpatch (unused)
+
+ -- Torbjörn Svensson <azoff@se.linux.org>  Wed, 17 Mar 2004 12:17:09 +0100
+
+ndiswrapper (0.5-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Wed, 10 Mar 2004 16:28:48 +0100
+
+ndiswrapper (0.4+cvs.20040302-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Tue,  2 Mar 2004 19:25:05 +0100
+
+ndiswrapper (0.4+cvs.20040229-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Sun, 29 Feb 2004 22:21:01 +0100
+
+ndiswrapper (0.4+cvs.20040226-4) unstable; urgency=low
+
+  * Fixed rules so that DRV_VERSION is defined from the file version
+  * Removed ndiswrapper from depends in ndiswrapper-source
+  * Added ndiswrapper to depends in ndiswrapper-modules
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Sun, 29 Feb 2004 16:43:24 +0100
+
+ndiswrapper (0.4+cvs.20040226-3) unstable; urgency=low
+
+  * Non-maintainer upload
+  * Fixed .orig.tar.gz
+  * Changed ndiswrapper to depends in source
+  * Added ndiswrapper-source to suggest list in ndiswrapper
+  * Changed cleantarget to all in rules
+
+ -- Torbjörn Svensson <azoff@se.linux.org>  Fri, 27 Feb 2004 03:15:54 +0100
+
+ndiswrapper (0.4+cvs.20040226-2) unstable; urgency=low
+
+  * /usr/src/modules/ndiswrapper is now entared in ndiswrapper-source
+  * Fixed description in debian/patches/makefile.dpatch
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Thu, 26 Feb 2004 23:57:18 +0100
+
+ndiswrapper (0.4+cvs.20040226-1) unstable; urgency=low
+
+  * Non-maintainer upload
+  * Updated to latest cvs
+  * Removed patch for paths again
+  * Added patch that removes depmod from driver/Makefile
+
+ -- Torbjörn Svensson <azoff@se.linux.org>  Thu, 26 Feb 2004 16:30:52 +0100
+
+ndiswrapper (0.4+cvs.20040225-1) unstable; urgency=low
+
+  * Non-maintainer upload
+  * Removed rules.old
+  * Updated to latest cvs
+  * Added dep on dpatch
+  * Added dpatch to rules
+  * Fixed a patch that changes /sbin to /usr/sbin in all files
+
+ -- Torbjörn Svensson <azoff@se.linux.org>  Wed, 25 Feb 2004 01:50:35 +0100
+
+ndiswrapper (0.4+cvs.20040224-3) unstable; urgency=low
+
+  * Non-maintainer upload
+  * Fixed a typo in the description.
+  * Removed ndiswrapper-source.rules
+
+ -- Torbjörn Svensson <azoff@se.linux.org>  Tue, 24 Feb 2004 23:27:21 +0100
+
+ndiswrapper (0.4+cvs.20040224-2) unstable; urgency=low
+
+  * Fixed perl dependencies
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Mon, 23 Feb 2004 19:19:13 +0100
+
+ndiswrapper (0.4+cvs.20040224-1) unstable; urgency=low
+
+  * Non-maintainer upload
+  * Updated to CVS release.
+
+ -- Torbjörn Svensson <azoff@se.linux.org>  Tue, 24 Feb 2004 16:44:13 +0100
+
+ndiswrapper (0.4-1) unstable; urgency=low
+
+  * Initial Release.
+
+ -- Erik Rigtorp <erik@rigtorp.com>  Mon, 23 Feb 2004 19:19:13 +0100
+

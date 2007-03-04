@@ -1,0 +1,59 @@
+Source: ndiswrapper
+Section: misc
+Priority: optional
+Maintainer: Andres Salomon <dilinger@debian.org>
+Uploaders: Kel Modderman <kel@otaku42.de>
+Standards-Version: 3.7.2
+Build-Depends: debhelper (>= 5.0.37), cdbs, bzip2, patchutils
+
+Package: ndiswrapper-common
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}
+Replaces: ndiswrapper-utils
+Suggests: ndiswrapper-source
+Description: Common scripts required to use the utilities for ndiswrapper
+ Some vendors do not release specifications of the hardware or provide a 
+ Linux driver for their wireless network cards. This project implements
+ Windows kernel API and NDIS (Network Driver Interface Specification) API
+ within Linux kernel. A Windows driver for wireless network card is then
+ linked to this implementation so that the driver runs natively, as though
+ it is in Windows, without binary emulation.
+ .
+ This package contains wrapper scripts to call out to the proper
+ versions of whatever -utils-X.X package is installed.
+ .
+ http://ndiswrapper.sourceforge.net/
+
+Package: ndiswrapper-utils-1.9
+Architecture: i386 amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}, ndiswrapper-common
+Suggests: ndiswrapper-source
+Description: Userspace utilities for the ndiswrapper linux kernel module
+ Some vendors do not release specifications of the hardware or provide a 
+ Linux driver for their wireless network cards. This project implements
+ Windows kernel API and NDIS (Network Driver Interface Specification) API
+ within Linux kernel. A Windows driver for wireless network card is then
+ linked to this implementation so that the driver runs natively, as though
+ it is in Windows, without binary emulation.
+ .
+ This package contains the userspace tools. You will also need the kernel
+ module package.
+ .
+ http://ndiswrapper.sourceforge.net/
+
+Package: ndiswrapper-source
+Architecture: all
+Depends: module-assistant, debhelper (>= 5.0.37), bzip2, gcc
+Suggests: kernel-package
+Description: Source for the ndiswrapper linux kernel module
+ Some vendors do not release specifications of the hardware or provide a 
+ Linux driver for their wireless network cards. This project implements
+ Windows kernel API and NDIS (Network Driver Interface Specification) API
+ within Linux kernel. A Windows driver for wireless network card is then
+ linked to this implementation so that the driver runs natively, as though
+ it is in Windows, without binary emulation.
+ .
+ This package provides the source code for the NdisWrapper kernel module.
+ Kernel source is required to compile this module.
+ .
+ http://ndiswrapper.sourceforge.net/

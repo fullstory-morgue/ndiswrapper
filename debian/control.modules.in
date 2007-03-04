@@ -1,0 +1,19 @@
+Source: ndiswrapper
+Section: misc
+Priority: optional
+Maintainer: Andres Salomon <dilinger@debian.org>
+Uploaders: Kel Modderman <kel@otaku42.de>
+Build-Depends: debhelper (>= 5.0.37), bzip2
+Standards-Version: 3.7.2
+
+Package: ndiswrapper-modules-_KVERS_
+Architecture: i386 amd64
+Depends: ndiswrapper-utils-1.9
+Recommends: linux-image-_KVERS_
+Description: Ndiswrapper linux kernel module
+ This package contains the ndiswrapper loadable kernel modules for the
+ kernel-image-_KVERS_ package.
+ .
+ If you compiled a custom kernel, you will most likely need to compile a
+ custom version of this module as well. The ndiswrapper-source
+ package has been provided for this purpose.

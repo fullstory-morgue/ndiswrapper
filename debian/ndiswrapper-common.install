@@ -1,0 +1,2 @@
+debian/loadndisdriver /sbin
+debian/ndiswrapper /usr/sbin

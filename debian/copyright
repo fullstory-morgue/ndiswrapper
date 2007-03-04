@@ -1,0 +1,63 @@
+This package was debianized by Erik Rigtorp <erkki@linux.nu> on
+Mon, 23 Feb 2004 17:48:38 +0100.
+
+This package is currently maintained by Andres Salomon <dilinger@debian.org>
+and Kel Modderman <kelmo@kanotixguide.org> as of Oct. 2006.
+
+It was downloaded from http://ndiswrapper.sourceforge.net/
+
+The upstream authors:
+Pontus Fuchs       - Main developer.
+Giridhar Pemmasani - Main developer.
+
+The following files contained within the ndiswrapper source package are
+part of the GNU C Library and covered by the GNU Lesser General Public
+License:
+
+	driver/pe_linker.h
+	driver/divdi3.c
+	driver/longlong.h
+
+Copyright (C) 1991, 1992, 1994, 1995, 1996, 1997, 1998, 1999, 2000
+Free Software Foundation, Inc.
+
+The GNU C Library is free software; you can redistribute it and/or
+modify it under the terms of the GNU Lesser General Public
+License as published by the Free Software Foundation; either
+version 2.1 of the License, or (at your option) any later version.
+
+The GNU C Library is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public
+License along with the GNU C Library; if not, write to the Free
+Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+02110-1301 USA
+
+On Debian systems, the full text of the LGPL can be found in
+/usr/share/common-licenses/LGPL
+
+The remaining files contained within the ndiswrapper source package are
+GPL licensed.
+
+Copyright (C) 2003-2005 Pontus Fuchs, Giridhar Pemmasani
+Copyright (C) 2006 Giridhar Pemmasani
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+
+On Debian systems, the full text of the GPL can be found in
+/usr/share/common-licenses/GPL
