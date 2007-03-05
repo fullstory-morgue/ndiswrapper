@@ -14,8 +14,11 @@ ndiswrapper (1.38-1) unstable; urgency=low
   * Rewrite ndiswrapper-source.README.Debian based on the text from
     madwifi/gspca source packages. Don't refer to methods of building modules
     that are not relevant to this package.
+  * Don't refer to kernel-image-_KVERS_ in long description of
+    control.modules.in.
+  * Use consistent case for the word `ndiswrapper' in debian/control*.
 
- -- Kel Modderman <kel@otaku42.de>  Mon,  5 Mar 2007 22:45:31 +1000
+ -- Kel Modderman <kel@otaku42.de>  Mon,  5 Mar 2007 22:53:42 +1000
 
 ndiswrapper (1.37-1) unstable; urgency=low
 

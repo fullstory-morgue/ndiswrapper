@@ -53,7 +53,7 @@ Description: Source for the ndiswrapper linux kernel module
  linked to this implementation so that the driver runs natively, as though
  it is in Windows, without binary emulation.
  .
- This package provides the source code for the NdisWrapper kernel module.
+ This package provides the source code for the ndiswrapper kernel module.
  Kernel source is required to compile this module.
  .
   Homepage: http://ndiswrapper.sourceforge.net/
