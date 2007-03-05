@@ -17,8 +17,11 @@ ndiswrapper (1.38-1) unstable; urgency=low
   * Don't refer to kernel-image-_KVERS_ in long description of
     control.modules.in.
   * Use consistent case for the word `ndiswrapper' in debian/control*.
+  * Remove curious KPKG_EXTRAV_ARG variable from rules.modules.
+  * Rewrite install/ndiswrapper-source debian/rules target to have same style
+    as madwifi/gspca source packages.
 
- -- Kel Modderman <kel@otaku42.de>  Mon,  5 Mar 2007 22:53:42 +1000
+ -- Kel Modderman <kel@otaku42.de>  Mon,  5 Mar 2007 23:07:04 +1000
 
 ndiswrapper (1.37-1) unstable; urgency=low
 

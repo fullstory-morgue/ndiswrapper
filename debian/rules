@@ -9,14 +9,23 @@ DEB_MAKE_INVOKE = $(MAKE) -C utils
 UVERS := $(shell dpkg-parsechangelog | sed -n 's/^Version: \(.*\)-.*/\1/p')
 
 install/ndiswrapper-source::
-	mkdir -p modules/ndiswrapper/debian
-	cp -ra driver/* modules/ndiswrapper
-	cp INSTALL modules/ndiswrapper
-	cp debian/changelog debian/compat debian/copyright modules/ndiswrapper/debian
-	cp debian/*.modules.in modules/ndiswrapper/debian
-	install -m755 debian/rules.modules modules/ndiswrapper/debian/rules
-	tar jcf debian/ndiswrapper-source/usr/src/ndiswrapper-source.tar.bz2 modules
-	rm -rf modules
+	# Enforce executable bit on debian/rules, and create directory 
+	# structure for modules source
+	install -D -m 0755 debian/rules.modules \
+		debian/tmp/modules/ndiswrapper/debian/rules
+	
+	# Prepare the other debian stuff
+	for f in *.modules.in control compat copyright changelog; do \
+		install -m 0644 debian/$$f \
+			debian/tmp/modules/ndiswrapper/debian/; \
+	done
+	
+	# Prepare upstream source
+	install driver/Makefile driver/*.[chS] debian/tmp/modules/ndiswrapper/
+	
+	# Prepare the debian source tarball
+	tar jcf debian/ndiswrapper-source/usr/src/ndiswrapper-source.tar.bz2 \
+		-C debian/tmp modules
 
 install/ndiswrapper-utils-1.9::
 	install -D -m755 utils/loadndisdriver \
