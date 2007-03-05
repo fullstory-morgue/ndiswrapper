@@ -4,8 +4,6 @@ ndiswrapper (1.38-1) unstable; urgency=low
   * Assume maintainership of package as discussed with Andres Salomon.
     - update debian/control* Maintainer and Uploaders fields
     - adjust debian/copyright to reflect maintainer status
-  * Add Daniel Baumann to Uploaders fields of debian/control*, he is
-    interested in sponsoring future versions of the ndiswrapper package.
   * Remove whitespace from tail of debian/changelog.
   * Prefix hompage url's with Hompage: and indent them with two spaces in
     debian/control.

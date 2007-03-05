@@ -7,7 +7,7 @@ ndiswrapper (1.21-1) unstable; urgency=low
     wpa_supplicant -D wext -i wlan0 -c /etc/wpa_supplicant/wpa_supplicant.conf
 
   When using wpa_supplicant via /etc/network/interfaces, it is suggested to use
-  the 'wpa-driver wext' option. More infomation can be found in 
+  the 'wpa-driver wext' option. More infomation can be found in
     /usr/share/doc/wpasupplicant
   when the wpasupplicant package is installed.
 

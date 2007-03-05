@@ -9,7 +9,7 @@ DEB_MAKE_INVOKE = $(MAKE) -C utils
 UVERS := $(shell dpkg-parsechangelog | sed -n 's/^Version: \(.*\)-.*/\1/p')
 
 install/ndiswrapper-source::
-	# Enforce executable bit on debian/rules, and create directory 
+	# Enforce executable bit on debian/rules, and create directory
 	# structure for modules source
 	install -D -m 0755 debian/rules.modules \
 		debian/tmp/modules/ndiswrapper/debian/rules

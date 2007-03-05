@@ -26,16 +26,16 @@ Building ndiswrapper kernel modules (kernel-package)
 ====================================================
 
 If necessary, prepare the kernel source tree for the target kernel. If you are
-using a self compiled kernel than you have an easy task! 
+using a self compiled kernel than you have an easy task!
 
-  $ cd /usr/src 
+  $ cd /usr/src
   $ tar jxvf ndiswrapper-source.tar.bz2
   $ cd linux-$KVERS
   $ make-kpkg --added-modules ndiswrapper modules
 
-Where $KVERS is the exact version string of the kernel you want to build ndiswrapper
-for. A ndiswrapper-modules package will be built against the kernel source version
-specified. Look at the output for where the ndiswrapper-modules package is located. 
-Then use dpkg to install the module package by hand, eg:-
+Where $KVERS is the exact version string of the kernel you want to build
+ndiswrapper for. A ndiswrapper-modules package will be built against the kernel
+source version specified. Look at the output for where the ndiswrapper-modules
+package is located. Then use dpkg to install the module package by hand, eg:-
 
   $ dpkg -i /usr/src/ndiswrapper-modules-$KVERS.deb
