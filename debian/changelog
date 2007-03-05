@@ -11,8 +11,11 @@ ndiswrapper (1.38-1) unstable; urgency=low
     debian/control.
   * Add get-orig-source target to debian/rules.
   * Add debian/watch file.
+  * Rewrite ndiswrapper-source.README.Debian based on the text from
+    madwifi/gspca source packages. Don't refer to methods of building modules
+    that are not relevant to this package.
 
- -- Kel Modderman <kel@otaku42.de>  Sun,  4 Mar 2007 12:05:23 +1000
+ -- Kel Modderman <kel@otaku42.de>  Mon,  5 Mar 2007 22:45:31 +1000
 
 ndiswrapper (1.37-1) unstable; urgency=low
 

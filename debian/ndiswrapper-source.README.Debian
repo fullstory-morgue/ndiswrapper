@@ -1,21 +1,41 @@
 ndiswrapper for Debian
-----------------------
+======================
 
-The ndiswrapper-source package can be used in several ways,
+This package provides the ndiswrapper source code and binaries that can be used
+to build modules that work with your custom built linux kernel. The source
+files are located in /usr/src/ndiswrapper-source.tar.bz2; unpacking that file
+in /usr/src will produce a build tree in /usr/src/modules/ndiswrapper/
+(The tar file can also be unpacked elsewhere).
 
- - Using the make-kpkg(1) command provided by the kernel-package Debian
-   package. This will produce a corresponding ndiswrapper-modules package for
-   the Debian kernel-image package that you are using. This is "the Debian
-   way". See the "modules_image" section of the make-kpkg(1) man page.
+Building ndiswrapper kernel modules with module-assistant
+=========================================================
 
- - Using module-assistant: "module-assistant auto-install ndiswrapper"
- 
- - Manually building a debian package, "cd /usr/src/ndiswrapper/ &&
-   ./debian/rules binary-modules".
+Please install the module-assistant package and issue the following commands:-
 
- - Changing to the /usr/src/modules/ndiswrapper/ directory and building as
-   the INSTALL file instructs using "make; make install". This will build
-   and install a module specific to the system you are building on and is
-   not under control of the packaging system.
+  $ m-a prepare
+  $ m-a a-i ndiswrapper
 
- -- Erik Rigtorp <erkki@linux.nu>, Mon, 31 May 2004 23:31:20 +0200
+The above commands will prepare, compile, package and install a set of
+ndiswrapper modules for your kernel.
+
+m-a is short for module-assistant, and a-i is short for auto-install. Please
+see the module-assistant documentation for further details.
+
+
+Building ndiswrapper kernel modules (kernel-package)
+====================================================
+
+If necessary, prepare the kernel source tree for the target kernel. If you are
+using a self compiled kernel than you have an easy task! 
+
+  $ cd /usr/src 
+  $ tar jxvf ndiswrapper-source.tar.bz2
+  $ cd linux-$KVERS
+  $ make-kpkg --added-modules ndiswrapper modules
+
+Where $KVERS is the exact version string of the kernel you want to build ndiswrapper
+for. A ndiswrapper-modules package will be built against the kernel source version
+specified. Look at the output for where the ndiswrapper-modules package is located. 
+Then use dpkg to install the module package by hand, eg:-
+
+  $ dpkg -i /usr/src/ndiswrapper-modules-$KVERS.deb
