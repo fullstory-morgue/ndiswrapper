@@ -6,8 +6,6 @@ include /usr/share/cdbs/1/class/makefile.mk
 
 DEB_MAKE_INVOKE = $(MAKE) -C utils
 
-UVERS := $(shell dpkg-parsechangelog | sed -n 's/^Version: \(.*\)-.*/\1/p')
-
 install/ndiswrapper-source::
 	# Enforce executable bit on debian/rules, and create directory
 	# structure for modules source
@@ -36,8 +34,3 @@ install/ndiswrapper-utils-1.9::
 		debian/ndiswrapper-utils-1.9/usr/share/man/man8/loadndisdriver-1.9.8
 	install -D -m644 ndiswrapper.8 \
 		debian/ndiswrapper-utils-1.9/usr/share/man/man8/ndiswrapper-1.9.8
-
-get-orig-source:
-	@wget -Nc -T10 -O ../ndiswrapper_$(UVERS).orig.tar.gz \
-		http://optusnet.dl.sourceforge.net/sourceforge/ndiswrapper/ndiswrapper-$(UVERS).tar.gz
-	@echo "Ready to for svn-upgrade ../ndiswrapper_$(UVERS).orig.tar.gz"
