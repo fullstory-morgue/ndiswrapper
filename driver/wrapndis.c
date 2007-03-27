@@ -64,7 +64,7 @@ NDIS_STATUS miniport_reset(struct wrap_ndis_device *wnd)
 	if (down_interruptible(&wnd->ndis_comm_mutex)) {
 		up(&wnd->tx_ring_mutex);
 		EXIT3(return NDIS_STATUS_FAILURE);
-	}		
+	}
 	miniport = &wnd->wd->driver->ndis_driver->miniport;
 	cur_lookahead = wnd->nmb->cur_lookahead;
 	max_lookahead = wnd->nmb->max_lookahead;
@@ -469,7 +469,7 @@ static int setup_tx_sg_list(struct wrap_ndis_device *wnd, struct sk_buff *skb,
 			    struct ndis_packet_oob_data *oob_data)
 {
 	struct ndis_sg_element *sg_element;
-	struct ndis_sg_list *tx_sg_list;
+	struct ndis_sg_list *sg_list;
 	int i;
 
 	ENTER3("%p, %d", skb, skb_shinfo(skb)->nr_frags);
@@ -485,14 +485,14 @@ static int setup_tx_sg_list(struct wrap_ndis_device *wnd, struct sk_buff *skb,
 		TRACE3("%Lx, %u", sg_element->address, sg_element->length);
 		return 0;
 	}
-	tx_sg_list = kmalloc(sizeof(*tx_sg_list) +
-			     (skb_shinfo(skb)->nr_frags + 1) *
-			     sizeof(*sg_element), GFP_ATOMIC);
-	if (!tx_sg_list)
+	sg_list = kmalloc(sizeof(*sg_list) +
+			  (skb_shinfo(skb)->nr_frags + 1) * sizeof(*sg_element),
+			  GFP_ATOMIC);
+	if (!sg_list)
 		return -ENOMEM;
-	tx_sg_list->nent = skb_shinfo(skb)->nr_frags + 1;
-	TRACE3("%p, %d", tx_sg_list, tx_sg_list->nent);
-	sg_element = tx_sg_list->elements;
+	sg_list->nent = skb_shinfo(skb)->nr_frags + 1;
+	TRACE3("%p, %d", sg_list, sg_list->nent);
+	sg_element = sg_list->elements;
 	sg_element->length = skb_headlen(skb);
 	sg_element->address =
 		PCI_DMA_MAP_SINGLE(wnd->wd->pci.pdev, skb->data,
@@ -507,7 +507,7 @@ static int setup_tx_sg_list(struct wrap_ndis_device *wnd, struct sk_buff *skb,
 				     PCI_DMA_TODEVICE);
 		TRACE3("%Lx, %u", sg_element->address, sg_element->length);
 	}
-	oob_data->ext.info[ScatterGatherListPacketInfo] = tx_sg_list;
+	oob_data->ext.info[ScatterGatherListPacketInfo] = sg_list;
 	return 0;
 }
 
@@ -516,21 +516,21 @@ static void free_tx_sg_list(struct wrap_ndis_device *wnd,
 {
 	int i;
 	struct ndis_sg_element *sg_element;
-	struct ndis_sg_list *tx_sg_list =
+	struct ndis_sg_list *sg_list =
 		oob_data->ext.info[ScatterGatherListPacketInfo];
-	sg_element = tx_sg_list->elements;
-	TRACE3("%p, %d", tx_sg_list, tx_sg_list->nent);
+	sg_element = sg_list->elements;
+	TRACE3("%p, %d", sg_list, sg_list->nent);
 	PCI_DMA_UNMAP_SINGLE(wnd->wd->pci.pdev, sg_element->address,
 			     sg_element->length, PCI_DMA_TODEVICE);
-	if (tx_sg_list->nent == 1)
+	if (sg_list->nent == 1)
 		EXIT3(return);
-	for (i = 1; i < tx_sg_list->nent; i++, sg_element++) {
+	for (i = 1; i < sg_list->nent; i++, sg_element++) {
 		TRACE3("%Lx, %u", sg_element->address, sg_element->length);
 		pci_unmap_page(wnd->wd->pci.pdev, sg_element->address,
 			       sg_element->length, PCI_DMA_TODEVICE);
 	}
-	TRACE3("%p", tx_sg_list);
-	kfree(tx_sg_list);
+	TRACE3("%p", sg_list);
+	kfree(sg_list);
 }
 
 static struct ndis_packet *alloc_tx_packet(struct wrap_ndis_device *wnd,
@@ -564,7 +564,6 @@ static struct ndis_packet *alloc_tx_packet(struct wrap_ndis_device *wnd,
 			return NULL;
 		}
 	}
-	TRACE2("%d, %d", wnd->tx_csum.value, skb->ip_summed);
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		struct ndis_tcp_ip_checksum_packet_info csum;
 		struct iphdr *ip = skb->nh.iph;
@@ -576,7 +575,6 @@ static struct ndis_packet *alloc_tx_packet(struct wrap_ndis_device *wnd,
 		else if (ip->protocol == IPPROTO_UDP)
 			csum.tx.udp = 1;
 //		csum->tx.ip = 1;
-		TRACE3("0x%05x", csum.value);
 		packet->private.flags |= NDIS_PROTOCOL_ID_TCP_IP;
 		oob_data->ext.info[TcpIpChecksumPacketInfo] =
 			(void *)(ULONG_PTR)csum.value;
@@ -712,16 +710,19 @@ static void tx_worker(worker_param_t param)
 {
 	struct wrap_ndis_device *wnd;
 	s8 n;
+	KIRQL irql;
 
 	wnd = worker_param_data(param, struct wrap_ndis_device, tx_work);
 	ENTER3("tx_ok %d", wnd->tx_ok);
 	while (wnd->tx_ok) {
 		if (down_interruptible(&wnd->tx_ring_mutex))
 			break;
+		irql = nt_spin_lock_irql(&wnd->tx_ring_lock, DISPATCH_LEVEL);
+		n = wnd->tx_ring_end - wnd->tx_ring_start;
+		nt_spin_unlock_irql(&wnd->tx_ring_lock, irql);
+		TRACE3("%d, %d, %d", wnd->tx_ring_start, wnd->tx_ring_end, n);
 		/* end == start if either ring is empty or full; in
 		 * the latter case is_tx_ring_full is set */
-		n = wnd->tx_ring_end - wnd->tx_ring_start;
-		TRACE3("%d, %d, %d", wnd->tx_ring_start, wnd->tx_ring_end, n);
 		if (n == 0) {
 			if (wnd->is_tx_ring_full)
 				n = TX_RING_SIZE - wnd->tx_ring_start;
@@ -758,9 +759,7 @@ static int tx_skbuff(struct sk_buff *skb, struct net_device *dev)
 		WARNING("couldn't allocate packet");
 		return NETDEV_TX_BUSY;
 	}
-	/* no need for lock here - already called holding
-	 * net_dev->xmit_lock and tx_ring_end is not updated
-	 * elsewhere */
+	nt_spin_lock(&wnd->tx_ring_lock);
 	wnd->tx_ring[wnd->tx_ring_end++] = packet;
 	if (wnd->tx_ring_end == TX_RING_SIZE)
 		wnd->tx_ring_end = 0;
@@ -768,6 +767,7 @@ static int tx_skbuff(struct sk_buff *skb, struct net_device *dev)
 		wnd->is_tx_ring_full = 1;
 		netif_stop_queue(wnd->net_dev);
 	}
+	nt_spin_unlock(&wnd->tx_ring_lock);
 	TRACE3("ring: %d, %d", wnd->tx_ring_start, wnd->tx_ring_end);
 	schedule_wrap_work(&wnd->tx_work);
 	return NETDEV_TX_OK;
@@ -1218,17 +1218,37 @@ NDIS_STATUS ndis_reinit(struct wrap_ndis_device *wnd)
 	return status;
 }
 
-static void get_encryption_capa(struct wrap_ndis_device *wnd)
+static void get_encryption_capa(struct wrap_ndis_device *wnd, char *buf,
+				const int buf_len)
 {
 	int i, mode;
 	NDIS_STATUS res;
 	struct ndis_assoc_info ndis_assoc_info;
 	struct ndis_add_key ndis_key;
 	struct ndis_capability *c;
-	char *buf;
-	const int buf_len = 512;
 
 	ENTER1("%p", wnd);
+	/* set network type to g, b, or a, in that order */
+	res = miniport_query_info(wnd, OID_802_11_NETWORK_TYPES_SUPPORTED,
+				  buf, buf_len);
+	if (res == NDIS_STATUS_SUCCESS) {
+		struct network_type_list *net_types;
+		unsigned long types = 0;
+		net_types = (struct network_type_list *)buf;
+		for (i = 0; i < net_types->num; i++) {
+			TRACE2("%d", net_types->types[i]);
+			set_bit(net_types->types[i], &types);
+		}
+		if (types & Ndis802_11OFDM24)
+			mode = Ndis802_11OFDM24;
+		else if (types & Ndis802_11DS)
+			mode = Ndis802_11DS;
+		else if (types & Ndis802_11OFDM5)
+			mode = Ndis802_11OFDM5;
+		else
+			mode = Ndis802_11DS;
+		miniport_set_int(wnd, OID_802_11_NETWORK_TYPE_IN_USE, mode);
+	}
 	/* check if WEP is supported */
 	if (set_encr_mode(wnd, Ndis802_11Encryption1Enabled) == 0 &&
 	    get_encr_mode(wnd) == Ndis802_11Encryption1KeyAbsent)
@@ -1292,19 +1312,11 @@ static void get_encryption_capa(struct wrap_ndis_device *wnd)
 	 * WPA */
 	set_bit(Ndis802_11AuthModeWPA, &wnd->capa.auth);
 
-	/* check for wpa2 */
-	buf = kmalloc(buf_len, GFP_KERNEL);
-	if (!buf) {
-		ERROR("couldn't allocate memory");
-		EXIT1(return);
-	}
 	memset(buf, 0, buf_len);
 	c = (struct ndis_capability *)buf;
 	res = miniport_query_info(wnd, OID_802_11_CAPABILITY, buf, buf_len);
-	if (!(res == NDIS_STATUS_SUCCESS && c->version == 2)) {
-		kfree(buf);
+	if (!(res == NDIS_STATUS_SUCCESS && c->version == 2))
 		EXIT1(return);
-	}
 	wnd->num_pmkids = c->num_PMKIDs;
 
 	for (i = 0; i < c->num_auth_encr_pair; i++) {
@@ -1339,7 +1351,6 @@ static void get_encryption_capa(struct wrap_ndis_device *wnd)
 			break;
 		}
 	}
-	kfree(buf);
 	EXIT1(return);
 }
 
@@ -1767,31 +1778,31 @@ static NDIS_STATUS ndis_start_device(struct wrap_ndis_device *wnd)
 {
 	struct wrap_device *wd;
 	struct net_device *net_dev;
-	NDIS_STATUS ndis_status;
+	NDIS_STATUS status;
 	char *buf;
-	const int buf_size = 256;
+	const int buf_len = 256;
 	mac_address mac;
 	struct transport_header_offset transport_header_offset;
 	int n;
 
-	ndis_status = miniport_init(wnd);
-	if (ndis_status == NDIS_STATUS_NOT_RECOGNIZED)
+	status = miniport_init(wnd);
+	if (status == NDIS_STATUS_NOT_RECOGNIZED)
 		EXIT1(return NDIS_STATUS_SUCCESS);
-	if (ndis_status != NDIS_STATUS_SUCCESS)
-		EXIT1(return ndis_status);
+	if (status != NDIS_STATUS_SUCCESS)
+		EXIT1(return status);
 	wd = wnd->wd;
 	net_dev = wnd->net_dev;
 
-	ndis_status = miniport_query_info(wnd, OID_802_3_CURRENT_ADDRESS,
-					  mac, sizeof(mac));
-	if (ndis_status) {
-		ERROR("couldn't get mac address: %08X", ndis_status);
+	status = miniport_query_info(wnd, OID_802_3_CURRENT_ADDRESS,
+				     mac, sizeof(mac));
+	if (status) {
+		ERROR("couldn't get mac address: %08X", status);
 		goto err_start;
 	}
 	TRACE1("mac:" MACSTRSEP, MAC2STR(mac));
-	ndis_status = miniport_query_int(wnd, OID_GEN_PHYSICAL_MEDIUM,
-					 &wnd->physical_medium);
-	if (ndis_status != NDIS_STATUS_SUCCESS)
+	status = miniport_query_int(wnd, OID_GEN_PHYSICAL_MEDIUM,
+				    &wnd->physical_medium);
+	if (status != NDIS_STATUS_SUCCESS)
 		wnd->physical_medium = NdisPhysicalMediumUnspecified;
 
 	get_supported_oids(wnd);
@@ -1822,9 +1833,9 @@ static NDIS_STATUS ndis_start_device(struct wrap_ndis_device *wnd)
 		net_dev->irq = wnd->ndis_irq->irq.irq;
 	net_dev->mem_start = wnd->mem_start;
 	net_dev->mem_end = wnd->mem_end;
-	ndis_status = miniport_query_int(wnd, OID_802_3_MAXIMUM_LIST_SIZE,
+	status = miniport_query_int(wnd, OID_802_3_MAXIMUM_LIST_SIZE,
 					 &wnd->multicast_size);
-	if (ndis_status != NDIS_STATUS_SUCCESS || wnd->multicast_size < 0)
+	if (status != NDIS_STATUS_SUCCESS || wnd->multicast_size < 0)
 		wnd->multicast_size = 0;
 	if (wnd->multicast_size > 0)
 		net_dev->flags |= IFF_MULTICAST;
@@ -1834,13 +1845,16 @@ static NDIS_STATUS ndis_start_device(struct wrap_ndis_device *wnd)
 	net_dev->poll_controller = ndis_poll_controller;
 #endif
 
-	buf = kmalloc(buf_size, GFP_KERNEL);
+	buf = kmalloc(buf_len, GFP_KERNEL);
 	if (!buf) {
 		WARNING("couldn't allocate memory");
 		goto err_start;
 	}
 
-	set_task_offload(wnd, buf, buf_size);
+	set_task_offload(wnd, buf, buf_len);
+#ifdef NETIF_F_LLTX
+	net_dev->features |= NETIF_F_LLTX;
+#endif
 
 	if (register_netdev(net_dev)) {
 		ERROR("cannot register net device %s", net_dev->name);
@@ -1848,11 +1862,11 @@ static NDIS_STATUS ndis_start_device(struct wrap_ndis_device *wnd)
 	}
 	register_netdevice_notifier(&netdev_notifier);
 	memcpy(wnd->netdev_name, net_dev->name, sizeof(wnd->netdev_name));
-	memset(buf, 0, buf_size);
-	ndis_status = miniport_query_info(wnd, OID_GEN_VENDOR_DESCRIPTION,
-					  buf, buf_size);
-	if (ndis_status != NDIS_STATUS_SUCCESS) {
-		WARNING("couldn't get vendor information: 0x%x", ndis_status);
+	memset(buf, 0, buf_len);
+	status = miniport_query_info(wnd, OID_GEN_VENDOR_DESCRIPTION,
+				     buf, buf_len);
+	if (status != NDIS_STATUS_SUCCESS) {
+		WARNING("couldn't get vendor information: 0x%x", status);
 		buf[0] = 0;
 	}
 	wnd->drv_ndis_version = n = 0;
@@ -1872,25 +1886,24 @@ static NDIS_STATUS ndis_start_device(struct wrap_ndis_device *wnd)
 		 * keep max at TX_RING_SIZE */
 		wnd->max_tx_packets = TX_RING_SIZE;
 	} else {
-		ndis_status =
-			miniport_query_int(wnd, OID_GEN_MAXIMUM_SEND_PACKETS,
-					   &wnd->max_tx_packets);
-		if (ndis_status != NDIS_STATUS_SUCCESS)
+		status = miniport_query_int(wnd, OID_GEN_MAXIMUM_SEND_PACKETS,
+					    &wnd->max_tx_packets);
+		if (status != NDIS_STATUS_SUCCESS)
 			wnd->max_tx_packets = 1;
 		if (wnd->max_tx_packets > TX_RING_SIZE)
 			wnd->max_tx_packets = TX_RING_SIZE;
 	}
 	TRACE2("maximum send packets: %d", wnd->max_tx_packets);
-	NdisAllocatePacketPoolEx(&ndis_status, &wnd->tx_packet_pool,
+	NdisAllocatePacketPoolEx(&status, &wnd->tx_packet_pool,
 				 wnd->max_tx_packets, 0,
 				 PROTOCOL_RESERVED_SIZE_IN_PACKET);
-	if (ndis_status != NDIS_STATUS_SUCCESS) {
+	if (status != NDIS_STATUS_SUCCESS) {
 		ERROR("couldn't allocate packet pool");
 		goto packet_pool_err;
 	}
-	NdisAllocateBufferPool(&ndis_status, &wnd->tx_buffer_pool,
+	NdisAllocateBufferPool(&status, &wnd->tx_buffer_pool,
 			       wnd->max_tx_packets + 4);
-	if (ndis_status != NDIS_STATUS_SUCCESS) {
+	if (status != NDIS_STATUS_SUCCESS) {
 		ERROR("couldn't allocate buffer pool");
 		goto buffer_pool_err;
 	}
@@ -1906,17 +1919,15 @@ static NDIS_STATUS ndis_start_device(struct wrap_ndis_device *wnd)
 
 	transport_header_offset.protocol_type = NDIS_PROTOCOL_ID_TCP_IP;
 	transport_header_offset.header_offset = sizeof(ETH_HLEN);
-	ndis_status = miniport_set_info(wnd, OID_GEN_TRANSPORT_HEADER_OFFSET,
-					&transport_header_offset,
-					sizeof(transport_header_offset));
-	TRACE2("%08X", ndis_status);
+	status = miniport_set_info(wnd, OID_GEN_TRANSPORT_HEADER_OFFSET,
+				   &transport_header_offset,
+				   sizeof(transport_header_offset));
+	TRACE2("%08X", status);
 
 	wnd->tx_ok = 1;
 	if (wnd->physical_medium == NdisPhysicalMediumWirelessLan) {
 		miniport_set_int(wnd, OID_802_11_POWER_MODE, NDIS_POWER_OFF);
-		miniport_set_int(wnd, OID_802_11_NETWORK_TYPE_IN_USE,
-				 Ndis802_11Automode);
-		get_encryption_capa(wnd);
+		get_encryption_capa(wnd, buf, buf_len);
 		TRACE1("capbilities = %ld", wnd->capa.encr);
 		printk(KERN_INFO "%s: encryption modes supported: "
 		       "%s%s%s%s%s%s%s\n", net_dev->name,
@@ -1967,6 +1978,7 @@ err_start:
 static int ndis_remove_device(struct wrap_ndis_device *wnd)
 {
 	s8 tx_pending;
+	KIRQL irql;
 
 	/* prevent setting essid during disassociation */
 	memset(&wnd->essid, 0, sizeof(wnd->essid));
@@ -1983,6 +1995,7 @@ static int ndis_remove_device(struct wrap_ndis_device *wnd)
 	/* if device is suspended, but resume failed, tx_ring_mutex
 	 * may already be locked */
 	down_trylock(&wnd->tx_ring_mutex);
+	irql = nt_spin_lock_irql(&wnd->tx_ring_lock, DISPATCH_LEVEL);
 	tx_pending = wnd->tx_ring_end - wnd->tx_ring_start;
 	if (tx_pending < 0)
 		tx_pending += TX_RING_SIZE;
@@ -1998,6 +2011,7 @@ static int ndis_remove_device(struct wrap_ndis_device *wnd)
 		wnd->tx_ring_start = (wnd->tx_ring_start + 1) % TX_RING_SIZE;
 		tx_pending--;
 	}
+	nt_spin_unlock_irql(&wnd->tx_ring_lock, irql);
 	up(&wnd->tx_ring_mutex);
 	wrap_procfs_remove_ndis_device(wnd);
 	miniport_halt(wnd);
@@ -2077,6 +2091,7 @@ static wstdcall NTSTATUS NdisAddDevice(struct driver_object *drv_obj,
 	init_nmb_functions(nmb);
 	wnd->net_dev = net_dev;
 	wnd->ndis_irq = NULL;
+	nt_spin_lock_init(&wnd->tx_ring_lock);
 	init_MUTEX(&wnd->tx_ring_mutex);
 	init_MUTEX(&wnd->ndis_comm_mutex);
 	init_waitqueue_head(&wnd->ndis_comm_wq);
