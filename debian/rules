@@ -38,6 +38,6 @@ install/ndiswrapper-utils-1.9::
 		debian/ndiswrapper-utils-1.9/usr/share/man/man8/ndiswrapper-1.9.8
 
 get-orig-source:
-	@test -d ../tarballs || mkdir -p ../tarballs
-	@wget -Nc -T10 -O ../tarballs/ndiswrapper_$(UVERS).orig.tar.gz \
+	@wget -Nc -T10 -O ../ndiswrapper_$(UVERS).orig.tar.gz \
 		http://optusnet.dl.sourceforge.net/sourceforge/ndiswrapper/ndiswrapper-$(UVERS).tar.gz
+	@echo "Ready to for svn-upgrade ../ndiswrapper_$(UVERS).orig.tar.gz"
