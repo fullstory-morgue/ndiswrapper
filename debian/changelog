@@ -1,4 +1,4 @@
-ndiswrapper (1.39-1) unstable; urgency=low
+ndiswrapper (1.40-1) UNRELEASED; urgency=low
 
   * New upstream release
   * Drop get-orig-source target, it no longer fits in with new SVN package
