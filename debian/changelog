@@ -4,8 +4,17 @@ ndiswrapper (1.41-1) unstable; urgency=low
   * Drop get-orig-source target, it no longer fits in with new SVN package
     layout. [debian/rules]
   * Remove bogus patchutils dependency. [debian/control]
+  * Minor syntax adjustment of ndiswrapper script. Use exec to fork the
+    ndiswrapper action from shell and a more descriptive shell variable for
+    latest ndisrwapper util version. [debian/ndiswrapper]
+  * Rewrite loadndisdriver script to allow processing of -v (version) query.
+    Function borrowed from debian/ndiswrapper to locate the latest binary to
+    pass the -v argument to. [debian/loadndisdriver]
+  * Use exec to fork loadndiswrapper action from current shell, add a comment
+    in there so that possible arguments to loadndiswrapper from the
+    ndiswrapper module are not forgotten. [debian/loadndisdriver]
 
- -- Kel Modderman <kel@otaku42.de>  Sun,  1 Apr 2007 12:40:54 +1000
+ -- Kel Modderman <kel@otaku42.de>  Sun,  1 Apr 2007 13:38:52 +1000
 
 ndiswrapper (1.38-1) unstable; urgency=low
 

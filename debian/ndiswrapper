@@ -8,12 +8,11 @@ latest_ndiswrapper () {
 	done | sort -n -t - -k 2 | tail -1
 }
 
-unset LATEST
-LATEST=`latest_ndiswrapper`
 
-if [ -x "$LATEST" ]; then
-	$LATEST "$@"
+NDISWRAPPER=$(latest_ndiswrapper)
+if [ -x "$NDISWRAPPER" ]; then
+	exec $NDISWRAPPER "$@"
 else
-	echo "Error: no versions of ndiswrapper found!" 1>&2
+	echo "Error: no ndiswrapper utils found!" 1>&2
 	exit 1
 fi

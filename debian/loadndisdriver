@@ -2,9 +2,23 @@
 
 set -e
 
-if [ -z "$3" ]; then
-	echo "Error: no version specified!" 1>&2
-	exit 1
-fi
+latest_loadndisdriver () {
+        for file in /sbin/loadndisdriver-[\.0-9][\.0-9]*; do
+                echo $file
+        done | sort -n -t - -k 2 | tail -1
+}
 
-/sbin/loadndisdriver-$3 "$@"
+if [ "$#" -ge "3" ]; then
+	# /sbin/loadndisdriver <ioctl command> <debug value> <utils version> \
+	#	<vendor> <device> <subdevice> <subvendor> <bus>
+	exec /sbin/loadndisdriver-$3 "$@"
+elif [ "$1" = "-v" ]; then
+	# report version number of most recent loadndisdriver binary
+	LOADNDISDRIVER=$(latest_loadndisdriver)
+	if [ -x "$LOADNDISDRIVER" ]; then
+		exec $LOADNDISDRIVER -v
+	else
+		echo "Error: unable to find latest loadndisdriver!" 1>&2
+		exit 1
+	fi
+fi
