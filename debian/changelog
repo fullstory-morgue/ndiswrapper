@@ -10,11 +10,11 @@ ndiswrapper (1.41-1) unstable; urgency=low
   * Rewrite loadndisdriver script to allow processing of -v (version) query.
     Function borrowed from debian/ndiswrapper to locate the latest binary to
     pass the -v argument to. [debian/loadndisdriver]
-  * Use exec to fork loadndiswrapper action from current shell, add a comment
-    in there so that possible arguments to loadndiswrapper from the
+  * Use exec to fork loadndisdriver action from current shell, add a comment
+    in there so that possible arguments to loadndisdriver from the
     ndiswrapper module are not forgotten. [debian/loadndisdriver]
 
- -- Kel Modderman <kel@otaku42.de>  Sun,  1 Apr 2007 13:38:52 +1000
+ -- Kel Modderman <kel@otaku42.de>  Sun,  1 Apr 2007 13:48:18 +1000
 
 ndiswrapper (1.38-1) unstable; urgency=low
 
