@@ -15,17 +15,6 @@
 
 #include "ntoskernel.h"
 
-int rtl_init(void)
-{
-	return 0;
-}
-
-/* called when module is being removed */
-void rtl_exit(void)
-{
-	EXIT4(return);
-}
-
 wstdcall SIZE_T WIN_FUNC(RtlCompareMemory,3)
 	(const void *a, const void *b, SIZE_T len)
 {
@@ -305,65 +294,110 @@ wstdcall NTSTATUS WIN_FUNC(RtlUnicodeStringToAnsiString,3)
 wstdcall NTSTATUS WIN_FUNC(RtlUnicodeStringToInteger,3)
 	(struct unicode_string *ustring, ULONG base, ULONG *value)
 {
-	int i, negsign;
-	wchar_t *str;
+	int i, sign = 1;
+	ULONG res;
+	typeof(ustring->buf) string;
 
-	*value = 0;
-	if (ustring->length == 0)
+	if (ustring->length == 0) {
+		*value = 0;
 		return STATUS_SUCCESS;
-
-	str = ustring->buf;
-	negsign = 0;
-	i = 0;
-	switch ((char)str[i]) {
-	case '-':
-		negsign = 1;
-		/* fall through */
-	case '+':
-		i++;
-		break;
 	}
 
-	if (base == 0 && i < ustring->length && str[i]) {
-		switch(tolower((char)str[i])) {
-		case 'x':
-			base = 16;
+	string = ustring->buf;
+	i = 0;
+	while (i < (ustring->length / sizeof(*string)) && string[i] == ' ')
+		i++;
+	if (string[i] == '+')
+		i++;
+	else if (string[i] == '-') {
+		i++;
+		sign = -1;
+	}
+	if (base == 0) {
+		base = 10;
+		if (i <= ((ustring->length / sizeof(*string)) - 2) &&
+		    string[i] == '0') {
 			i++;
-			break;
-		case 'o':
-			base = 8;
-			i++;
-			break;
-		case 'b':
-			base = 2;
-			i++;
-			break;
-		default:
-			base = 10;
-			break;
+			if (string[i] == 'b') {
+				base = 2;
+				i++;
+			} else if (string[i] == 'o') {
+				base = 8;
+				i++;
+			} else if (string[i] == 'x') {
+				base = 16;
+				i++;
+			}
 		}
 	}
 	if (!(base == 2 || base == 8 || base == 10 || base == 16))
-		return STATUS_INVALID_PARAMETER;
+		EXIT2(return STATUS_INVALID_PARAMETER);
 
-	for ( ; i < ustring->length && str[i]; i++) {
-		int r;
-		char c = tolower((char)str[i]);
-
-		if (c >= '0' && c <= '9')
-			r = c - '0';
-		else if (c >= 'a' && c <= 'f')
-			r = c - 'a' + 10;
+	for (res = 0; i < (ustring->length / sizeof(*string)); i++) {
+		int v;
+		if (isdigit((char)string[i]))
+			v = string[i] - '0';
+		else if (isxdigit((char)string[i]))
+			v = tolower((char)string[i]) - 'a' + 10;
 		else
-			break;
-		if (r >= base)
-			break;
-		*value = *value * base + r;
+			v = base;
+		if (v >= base)
+			EXIT2(return STATUS_INVALID_PARAMETER);
+		res = res * base + v;
 	}
-	if (negsign)
-		*value *= -1;
+	*value = sign * res;
+	EXIT3(return STATUS_SUCCESS);
+}
 
-	return STATUS_SUCCESS;
+wstdcall NTSTATUS WIN_FUNC(RtlCharToInteger,3)
+	(const char *string, ULONG base, ULONG *value)
+{
+	int sign = 1;
+	ULONG res;
+
+	if (!string || !value)
+		EXIT2(return STATUS_INVALID_PARAMETER);
+	while (*string == ' ')
+		string++;
+	if (*string == '+')
+		string++;
+	else if (*string == '-') {
+		string++;
+		sign = -1;
+	}
+	if (base == 0) {
+		base = 10;
+		if (*string == '0') {
+			string++;
+			if (*string == 'b') {
+				base = 2;
+				string++;
+			} else if (*string == 'o') {
+				base = 8;
+				string++;
+			} else if (*string == 'x') {
+				base = 16;
+				string++;
+			}
+		}
+	}
+	if (!(base == 2 || base == 8 || base == 10 || base == 16))
+		EXIT2(return STATUS_INVALID_PARAMETER);
+
+	for (res = 0; *string; string++) {
+		int v;
+		if (isdigit(*string))
+			v = *string - '0';
+		else if (isxdigit(*string))
+			v = tolower(*string) - 'a' + 10;
+		else
+			v = base;
+		if (v >= base)
+			EXIT2(return STATUS_INVALID_PARAMETER);
+		res = res * base + v;
+	}
+	*value = sign * res;
+	EXIT3(return STATUS_SUCCESS);
 }
 
 wstdcall NTSTATUS WIN_FUNC(RtlIntegerToUnicodeString,3)
@@ -376,7 +410,7 @@ wstdcall NTSTATUS WIN_FUNC(RtlIntegerToUnicodeString,3)
 		base = 10;
 	if (!(base == 2 || base == 8 || base == 10 || base == 16))
 		return STATUS_INVALID_PARAMETER;
-	for (i = 0; value && i * sizeof(buf[0]) < ustring->max_length; i++) {
+	for (i = 0; value && i < ustring->max_length / sizeof(*buf); i++) {
 		int r;
 		r = value % base;
 		value /= base;
@@ -387,7 +421,7 @@ wstdcall NTSTATUS WIN_FUNC(RtlIntegerToUnicodeString,3)
 	}
 	if (value)
 		return STATUS_BUFFER_OVERFLOW;
-	ustring->length = i * sizeof(buf[0]);
+	ustring->length = i * sizeof(*buf);
 	return STATUS_SUCCESS;
 }
 
@@ -658,3 +692,14 @@ void WIN_FUNC(RtlUnwind,0)
 }
 
 #include "rtl_exports.h"
+
+int rtl_init(void)
+{
+	return 0;
+}
+
+/* called when module is being removed */
+void rtl_exit(void)
+{
+	EXIT4(return);
+}

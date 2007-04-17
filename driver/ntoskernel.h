@@ -97,7 +97,7 @@
 
 #include <linux/smp_lock.h>
 
-/* RedHat kernels #define irqs_disabled this way */
+/* RedHat kernels define irqs_disabled this way */
 #ifndef irqs_disabled
 #define irqs_disabled()                \
 ({                                     \
@@ -118,80 +118,48 @@
 
 #endif // LINUX_VERSION_CODE
 
-#ifndef __wait_event_interruptible_timeout
-#define __wait_event_interruptible_timeout(wq, condition, ret)		\
-do {									\
-	wait_queue_t __wait;						\
-	init_waitqueue_entry(&__wait, current);				\
-									\
-	add_wait_queue(&wq, &__wait);					\
-	for (;;) {							\
-		set_current_state(TASK_INTERRUPTIBLE);			\
-		if (condition)						\
-			break;						\
-		if (!signal_pending(current)) {				\
-			ret = schedule_timeout(ret);			\
-			if (!ret)					\
-				break;					\
-			continue;					\
-		}							\
-		ret = -ERESTARTSYS;					\
-		break;							\
-	}								\
-	current->state = TASK_RUNNING;					\
-	remove_wait_queue(&wq, &__wait);				\
-} while (0)
-#endif
+/* Wait in wait_state (e.g., TASK_INTERRUPTIBLE) for condition to
+ * become true; timeout is either jiffies (> 0) to wait or 0 to wait
+ * forever.
+ * When timeout == 0, return value is
+ *    > 0 if condition becomes true, or
+ *    < 0 if signal is pending on the thread.
+ * When timeout > 0, return value is
+ *    > 0 if condition becomes true before timeout,
+ *    < 0 if signal is pending on the thread before timeout, or
+ *    0 if timedout (condition may have become true at the same time)
+ */
 
-#ifndef wait_event_interruptible_timeout
-#define wait_event_interruptible_timeout(wq, condition, timeout)	\
-({									\
-	long __ret = timeout;						\
-	if (!(condition))						\
-		__wait_event_interruptible_timeout(wq, condition, __ret); \
-	__ret;								\
+#define wrap_wait_event(condition, timeout, wait_state)		\
+({								\
+	long ret = timeout ? timeout : 1;			\
+	while (!(condition)) {					\
+		if (signal_pending(current)) {			\
+			ret = -ERESTARTSYS;			\
+			break;					\
+		}						\
+		set_current_state(wait_state);			\
+		if (timeout) {					\
+			ret = schedule_timeout(ret);		\
+			if (!ret)				\
+				break;				\
+		} else						\
+			schedule();				\
+	}							\
+	current->state = TASK_RUNNING;				\
+	ret;							\
 })
-#endif
-
-#ifndef __wait_event_timeout
-#define __wait_event_timeout(wq, condition, ret)			\
-do {									\
-	wait_queue_t __wait;						\
-	init_waitqueue_entry(&__wait, current);				\
-									\
-	add_wait_queue(&wq, &__wait);					\
-	for (;;) {							\
-		set_current_state(TASK_UNINTERRUPTIBLE);		\
-		if (condition)						\
-			break;						\
-		ret = schedule_timeout(ret);				\
-		if (!ret)						\
-			break;						\
-	}								\
-	current->state = TASK_RUNNING;					\
-	remove_wait_queue(&wq, &__wait);				\
-} while (0)
-#endif
-
-#ifndef wait_event_timeout
-#define wait_event_timeout(wq, condition, timeout)			\
-({									\
-	long __ret = timeout;						\
-	if (!(condition))						\
-		__wait_event_timeout(wq, condition, __ret);		\
-	 __ret;								\
-})
-#endif
 
 #ifdef USE_OWN_WQ
 
 typedef struct {
 	spinlock_t lock;
-	wait_queue_head_t waitq_head;
-	/* how many work_structs pending? */
-	int pending;
-	const char *name;
+	struct task_struct *task;
+	struct completion *completion;
+	char name[16];
 	int pid;
+	/* whether any work_structs pending? <0 implies quit */
+	int pending;
 	/* list of work_structs pending */
 	struct list_head work_list;
 } workqueue_struct_t;
@@ -213,13 +181,18 @@ typedef struct {
 
 #undef create_singlethread_workqueue
 #define create_singlethread_workqueue wrap_create_wq
+#undef destroy_workqueue
 #define destroy_workqueue wrap_destroy_wq
+#undef queue_work
 #define queue_work wrap_queue_work
+#undef flush_workqueue
+#define flush_workqueue wrap_flush_wq
 
 workqueue_struct_t *wrap_create_wq(const char *name);
 void wrap_destroy_wq(workqueue_struct_t *workq);
 void wrap_queue_work(workqueue_struct_t *workq, work_struct_t *work) wfastcall;
 void wrap_cancel_work(work_struct_t *work);
+void wrap_flush_wq(workqueue_struct_t *workq);
 typedef void *worker_param_t;
 #define worker_param_data(param, type, member) param
 
@@ -375,6 +348,14 @@ typedef u32 pm_message_t;
 #define memcpy_skb(skb, from, length)			\
 	memcpy(skb_put(skb, length), from, length)
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
+#define thread_priority(thread) (thread)->nice
+#define set_thread_priority(thread, prio) (thread)->nice = (prio)
+#else
+#define thread_priority(thread) task_nice(thread)
+#define set_thread_priority(thread, prio) set_user_nice(thread, prio)
+#endif
+
 #include "ndiswrapper.h"
 #include "pe_linker.h"
 #include "wrapmem.h"
@@ -405,10 +386,10 @@ typedef u32 pm_message_t;
 #endif
 
 /* TICK is 100ns */
-#define TICKSPERSEC		10000000LL
+#define TICKSPERSEC		10000000
 #define TICKSPERMSEC		10000
 #define SECSPERDAY		86400
-#define TICKSPERJIFFY		((10000000 + HZ - 1) / HZ)
+#define TICKSPERJIFFY		((TICKSPERSEC + HZ - 1) / HZ)
 
 /* 1601 to 1970 is 369 years plus 89 leap days */
 #define SECS_1601_TO_1970	((369 * 365 + 89) * (u64)SECSPERDAY)
@@ -477,10 +458,10 @@ struct pe_image {
 struct ndis_miniport_block;
 
 struct wrap_timer {
-	long repeat;
 	struct nt_list list;
 	struct timer_list timer;
 	struct nt_timer *nt_timer;
+	long repeat;
 #ifdef TIMER_DEBUG
 	unsigned long wrap_timer_magic;
 #endif
@@ -523,6 +504,10 @@ struct wrap_driver {
 	struct wrap_ndis_driver *ndis_driver;
 };
 
+enum hw_status {
+	HW_INITIALIZED = 1, HW_SUSPENDED, HW_HALTED, HW_PRESENT,
+};
+
 struct wrap_device {
 	/* first part is (de)initialized once by loader */
 	struct nt_list list;
@@ -538,6 +523,8 @@ struct wrap_device {
 
 	/* rest should be (de)initialized when a device is
 	 * (un)plugged */
+	struct cm_resource_list *resource_list;
+	unsigned long hw_status;
 	struct device_object *pdo;
 	union {
 		struct {
@@ -556,8 +543,6 @@ struct wrap_device {
 	union {
 		struct wrap_ndis_device *wnd;
 	};
-	struct cm_resource_list *resource_list;
-	BOOLEAN surprise_removed;
 };
 
 #define wrap_is_pci_bus(dev_bus)			\
@@ -801,11 +786,11 @@ static inline KIRQL current_irql(void)
 {
 	if (in_irq() || irqs_disabled())
 		EXIT6(return DEVICE_LEVEL);
-	if (in_interrupt()
+	if (
 #ifdef CONFIG_PREEMPT_RT
-	    || in_atomic()
+		in_atomic() ||
 #endif
-		)
+		in_interrupt())
 		EXIT6(return DISPATCH_LEVEL);
 	EXIT6(return PASSIVE_LEVEL);
 }
@@ -982,11 +967,8 @@ do {									\
 
 static inline ULONG SPAN_PAGES(void *ptr, SIZE_T length)
 {
-	/* all allocations in ndiswrapper are with kmalloc, so memory
-	 * at ptr is physically contiguous - which can be mapped to
-	 * DMA / physicall address with one register */
 	return PAGE_ALIGN(((unsigned long)ptr & (PAGE_SIZE - 1)) + length)
-			  >> PAGE_SHIFT;
+		>> PAGE_SHIFT;
 }
 
 #ifdef CONFIG_X86_64
