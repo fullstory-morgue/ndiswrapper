@@ -230,6 +230,8 @@ struct nt_list {
 
 typedef volatile ULONG_PTR NT_SPIN_LOCK;
 
+enum kdpc_importance {LowImportance, MediumImportance, HighImportance};
+
 struct kdpc;
 typedef void (*DPC)(struct kdpc *kdpc, void *ctx, void *arg1,
 		    void *arg2) wstdcall;
@@ -242,7 +244,12 @@ struct kdpc {
 	void *ctx;
 	void *arg1;
 	void *arg2;
-	NT_SPIN_LOCK *lock;
+	union {
+		NT_SPIN_LOCK *lock;
+		/* 'lock' is not used; 'queued' represents whether
+		 * kdpc is queued or not */
+		int queued;
+	};
 };
 
 enum pool_type {
@@ -360,7 +367,7 @@ struct wait_block {
 	struct nt_list list;
 	struct task_struct *thread;
 	void *object;
-	void *thread_waitq;
+	void *thread_event;
 	USHORT wait_key;
 	USHORT wait_type;
 };
@@ -417,7 +424,7 @@ struct nt_timer {
 		ULONGLONG due_time;
 		struct wrap_timer *wrap_timer;
 	};
-	struct nt_list list;
+	struct nt_list nt_timer_list;
 	struct kdpc *kdpc;
 	union {
 		LONG period;
@@ -444,15 +451,18 @@ struct nt_thread {
 	 * structure is opaque to drivers, we just define what we
 	 * need */
 	int pid;
+	NTSTATUS status;
 	struct task_struct *task;
 	struct nt_list irps;
 	NT_SPIN_LOCK lock;
 };
 
-#define set_dh_type(dh, type)		((dh)->type = (type))
-#define is_mutex_dh(dh)			((dh)->type == MutexObject)
-#define is_semaphore_dh(dh)		((dh)->type == SemaphoreObject)
-#define is_nt_thread_dh(dh)		((dh)->type == ThreadObject)
+#define set_object_type(dh, type)	((dh)->type = (type))
+#define is_notify_object(dh)		((dh)->type == NotificationObject)
+#define is_synch_object(dh)		((dh)->type == SynchronizationObject)
+#define is_mutex_object(dh)		((dh)->type == MutexObject)
+#define is_semaphore_object(dh)		((dh)->type == SemaphoreObject)
+#define is_nt_thread_object(dh)		((dh)->type == ThreadObject)
 
 #define IO_TYPE_ADAPTER				1
 #define IO_TYPE_CONTROLLER			2
@@ -1011,7 +1021,7 @@ struct irp {
 		LONG irp_count;
 		void *system_buffer;
 	} associated_irp;
-	struct nt_list threads;
+	struct nt_list thread_list;
 	struct io_status_block io_status;
 	KPROCESSOR_MODE requestor_mode;
 	BOOLEAN pending_returned;

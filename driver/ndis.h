@@ -485,7 +485,11 @@ typedef void (*NDIS_PROC)(struct ndis_work_item *, void *) wstdcall;
 struct ndis_work_item {
 	void *ctx;
 	NDIS_PROC func;
-	UCHAR reserved[8 * sizeof(void *)];
+	union {
+		UCHAR reserved[8 * sizeof(void *)];
+		/* ndiswrapper specific */
+		struct nt_list list;
+	};
 };
 
 struct alloc_shared_mem {
@@ -494,32 +498,26 @@ struct alloc_shared_mem {
 	BOOLEAN cached;
 };
 
-struct ndis_work_entry {
-	struct nt_list list;
-	struct ndis_work_item *ndis_work_item;
-};
-
 struct ndis_miniport_block;
 
-struct ndis_irq {
-	/* void *intr_obj is used for irq */
-	union {
-		void *intr_obj;
-		unsigned int irq;
-	} irq;
+/* this is opaque to drivers, so we can use it as we please */
+struct ndis_mp_interrupt {
+	struct kinterrupt *kinterrupt;
 	/* Taken by ISR, DisableInterrupt and SynchronizeWithInterrupt */
 	NT_SPIN_LOCK lock;
-	void *id;
+	union {
+		void *reserved;
+		unsigned int irq;
+	};
 	ndis_isr_handler isr;
-	void *dpc;
+	ndis_interrupt_handler mp_dpc;
 	struct kdpc intr_dpc;
 	struct ndis_miniport_block *nmb;
 	UCHAR dpc_count;
-	/* unsigned char filler1 is used for enabled */
-	UCHAR enabled;
-	struct nt_event completed_event;
-	UCHAR shared;
-	UCHAR req_isr;
+	BOOLEAN enable;
+	struct nt_event dpc_completed_event;
+	BOOLEAN shared;
+	BOOLEAN req_isr;
 };
 
 struct ndis_binary_data {
@@ -604,9 +602,8 @@ enum ndis_media_stream_mode {
 };
 
 enum wrapper_work {
-	LINK_STATUS_CHANGED, SET_MULTICAST_LIST, COLLECT_STATS, MINIPORT_RESET,
-	/* do not work when this is set */
-	SHUTDOWN
+	LINK_STATUS_CHANGED, SET_MULTICAST_LIST, COLLECT_IW_STATS,
+	MINIPORT_RESET, SHUTDOWN
 };
 
 struct encr_info {
@@ -702,21 +699,6 @@ struct ndis_reference {
 	BOOLEAN closing;
 };
 
-struct ndis_miniport_interrupt {
-	void *object;
-	NT_SPIN_LOCK dpc_count_lock;
-	void *reserved;
-	ndis_isr_handler irq_th;
-	ndis_interrupt_handler irq_bh;
-	struct kdpc interrupt_dpc;
-	struct ndis_miniport_block *nmb;
-	UCHAR dpc_count;
-	BOOLEAN filler1;
-	struct nt_event dpcs_completed_event;
-        BOOLEAN shared_interrupt;
-	BOOLEAN isr_requested;
-};
-
 struct ndis_filterdbs {
 	union {
 		void *eth_db;
@@ -739,10 +721,6 @@ struct auth_encr_capa {
 };
 
 enum driver_type { DRIVER_WIRELESS = 1, DRIVER_ETHERNET, };
-
-enum hw_status {
-	HW_INITIALIZED = 1, HW_SUSPENDED, HW_HALTED,
-};
 
 /*
  * This struct contains function pointers that the drivers references
@@ -845,16 +823,15 @@ struct wrap_ndis_device {
 	struct ndis_miniport_block *nmb;
 	struct wrap_device *wd;
 	struct net_device *net_dev;
-	unsigned long hw_status;
 	void *shutdown_ctx;
 	struct tasklet_struct irq_tasklet;
-	struct ndis_irq *ndis_irq;
+	struct ndis_mp_interrupt *mp_interrupt;
 	unsigned long mem_start;
 	unsigned long mem_end;
 
-	struct net_device_stats stats;
-	struct iw_statistics wireless_stats;
-	BOOLEAN stats_enabled;
+	struct net_device_stats net_stats;
+	struct iw_statistics iw_stats;
+	BOOLEAN iw_stats_enabled;
 	struct ndis_wireless_stats ndis_stats;
 
 	work_struct_t tx_work;
@@ -867,7 +844,7 @@ struct wrap_ndis_device {
 	unsigned int max_tx_packets;
 	u8 tx_ok;
 	struct semaphore ndis_comm_mutex;
-	wait_queue_head_t ndis_comm_wq;
+	struct task_struct *ndis_comm_task;
 	s8 ndis_comm_done;
 	NDIS_STATUS ndis_comm_status;
 	ULONG packet_filter;
@@ -878,8 +855,8 @@ struct wrap_ndis_device {
 
 	int hangcheck_interval;
 	struct timer_list hangcheck_timer;
-	int stats_interval;
-	struct timer_list stats_timer;
+	int iw_stats_interval;
+	struct timer_list iw_stats_timer;
 	unsigned long scan_timestamp;
 	struct encr_info encr_info;
 	char nick[IW_ESSID_MAX_SIZE];
@@ -908,7 +885,7 @@ struct wrap_ndis_device {
 	struct v4_checksum tx_csum;
 	enum ndis_physical_medium physical_medium;
 	u32 ndis_wolopts;
-	struct nt_list timer_list;
+	struct nt_list wrap_timer_list;
 	char netdev_name[IFNAMSIZ];
 	int drv_ndis_version;
 };
@@ -925,13 +902,11 @@ struct ndis_pmkid_candidate_list {
 };
 
 irqreturn_t ndis_isr(int irq, void *data ISR_PT_REGS_PARAM_DECL);
-void init_nmb_functions(struct ndis_miniport_block *nmb);
 
 int ndis_init(void);
-void ndis_exit_device(struct wrap_ndis_device *wnd);
 void ndis_exit(void);
-void insert_ndis_kdpc_work(struct kdpc *kdpc);
-BOOLEAN remove_ndis_kdpc_work(struct kdpc *kdpc);
+int ndis_init_device(struct wrap_ndis_device *wnd);
+void ndis_exit_device(struct wrap_ndis_device *wnd);
 
 int wrap_procfs_add_ndis_device(struct wrap_ndis_device *wnd);
 void wrap_procfs_remove_ndis_device(struct wrap_ndis_device *wnd);
@@ -970,7 +945,7 @@ void NdisMResetComplete(struct ndis_miniport_block *nmb,
 ULONG NDIS_BUFFER_TO_SPAN_PAGES(ndis_buffer *buffer) wstdcall;
 BOOLEAN NdisWaitEvent(struct ndis_event *event, UINT timeout) wstdcall;
 void NdisSetEvent(struct ndis_event *event) wstdcall;
-void NdisMDeregisterInterrupt(struct ndis_irq *ndis_irq) wstdcall;
+void NdisMDeregisterInterrupt(struct ndis_mp_interrupt *mp_interrupt) wstdcall;
 void EthRxIndicateHandler(struct ndis_miniport_block *nmb, void *rx_ctx,
 			  char *header1, char *header, UINT header_size,
 			  void *look_ahead, UINT look_ahead_size,

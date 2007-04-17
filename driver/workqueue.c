@@ -31,44 +31,49 @@ static int workq_thread(void *data)
 	current->nice -= 5;
 #else
 	daemonize(workq->name);
+	set_user_nice(current, -5);
 #endif
+
 #ifdef PF_NOFREEZE
 	current->flags |= PF_NOFREEZE;
 #else
 	sigfillset(&current->blocked);
 #endif
-	while (1) {
-		if (wait_event_interruptible(workq->waitq_head,
-					     workq->pending)) {
+
+	workq->task = current;
+	complete(workq->completion);
+	workq->completion = NULL;
+	WORKTRACE("%s (%d) started", workq->name, workq->pid);
+	while (workq->pending >= 0) {
+		if (wrap_wait_event(workq->pending, 0,
+				    TASK_INTERRUPTIBLE) < 0) {
 			/* TODO: deal with signal */
 			WARNING("signal not blocked?");
 			flush_signals(current);
 			continue;
 		}
-		spin_lock_irqsave(&workq->lock, flags);
-		if (workq->pending-- < 0)
-			break;
-		if (list_empty(&workq->work_list))
-			work = NULL;
-		else {
-			struct list_head *entry = workq->work_list.next;
+		while (1) {
+			struct list_head *entry;
+
+			spin_lock_irqsave(&workq->lock, flags);
+			if (list_empty(&workq->work_list)) {
+				if (workq->pending > 0)
+					workq->pending = 0;
+				spin_unlock_irqrestore(&workq->lock, flags);
+				break;
+			}
+			entry = workq->work_list.next;
 			work = list_entry(entry, work_struct_t, list);
-			BUG_ON(work->workq != workq);
 			if (xchg(&work->workq, NULL))
 				list_del(entry);
 			else
 				work = NULL;
+			spin_unlock_irqrestore(&workq->lock, flags);
+			if (work)
+				work->func(work->data);
 		}
-		spin_unlock_irqrestore(&workq->lock, flags);
-		if (work)
-			work->func(work->data);
 	}
-	/* set workq for each work to NULL so if work is cancelled
-	 * later, it won't access workq */
-	list_for_each_entry(work, &workq->work_list, list) {
-		work->workq = NULL;
-	}
-	spin_unlock_irqrestore(&workq->lock, flags);
+
 	WORKTRACE("%s exiting", workq->name);
 	workq->pid = 0;
 	return 0;
@@ -83,7 +88,7 @@ wfastcall void wrap_queue_work(workqueue_struct_t *workq, work_struct_t *work)
 		work->workq = workq;
 		list_add_tail(&work->list, &workq->work_list);
 		workq->pending++;
-		wake_up_interruptible(&workq->waitq_head);
+		wake_up_process(workq->task);
 	}
 	spin_unlock_irqrestore(&workq->lock, flags);
 }
@@ -96,42 +101,49 @@ void wrap_cancel_work(work_struct_t *work)
 	if ((workq = xchg(&work->workq, NULL))) {
 		spin_lock_irqsave(&workq->lock, flags);
 		list_del(&work->list);
-		/* don't decrement workq->pending here; otherwise, it
-		 * may prematurely terminate the thread, as this work
-		 * may already have been done (pending may have been
-		 * decremented for it) */
 		spin_unlock_irqrestore(&workq->lock, flags);
 	}
 }
 
 workqueue_struct_t *wrap_create_wq(const char *name)
 {
+	struct completion started;
 	workqueue_struct_t *workq = kmalloc(sizeof(*workq), GFP_KERNEL);
 	if (!workq) {
 		WARNING("couldn't allocate memory");
 		return NULL;
 	}
 	memset(workq, 0, sizeof(*workq));
-	init_waitqueue_head(&workq->waitq_head);
 	spin_lock_init(&workq->lock);
-	workq->name = name;
+	strncpy(workq->name, name, sizeof(workq->name));
+	workq->name[sizeof(workq->name) - 1] = 0;
 	INIT_LIST_HEAD(&workq->work_list);
-	/* we don't need to wait for thread to start, so completion
-	 * not used */
+	init_completion(&started);
+	workq->completion = &started;
 	workq->pid = kernel_thread(workq_thread, workq, 0);
 	if (workq->pid <= 0) {
 		kfree(workq);
 		WARNING("couldn't start thread %s", name);
 		return NULL;
 	}
+	wait_for_completion(&started);
 	return workq;
+}
+
+void wrap_flush_wq(workqueue_struct_t *workq)
+{
+	workq->pending = 1;
+	wake_up_process(workq->task);
+	while (workq->pending > 0)
+		schedule();
 }
 
 void wrap_destroy_wq(workqueue_struct_t *workq)
 {
+	workq->pending = -1;
+	wake_up_process(workq->task);
 	while (workq->pid) {
-		workq->pending = -1;
-		wake_up_interruptible(&workq->waitq_head);
+		WORKTRACE("%d", workq->pid);
 		schedule();
 	}
 	kfree(workq);
