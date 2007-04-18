@@ -1,8 +1,8 @@
-ndiswrapper (1.42-1) UNRELEASED; urgency=low
+ndiswrapper (1.42-1) unstable; urgency=low
 
-  * (NOT RELEASED YET) New upstream release
+  * New upstream release.
 
- -- Kel Modderman <kel@otaku42.de>  Wed, 18 Apr 2007 08:00:22 +1000
+ -- Kel Modderman <kel@otaku42.de>  Wed, 18 Apr 2007 18:23:11 +1000
 
 ndiswrapper (1.41-1) unstable; urgency=low
 
