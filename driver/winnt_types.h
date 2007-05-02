@@ -20,8 +20,13 @@
 #define FALSE				0
 
 #define PASSIVE_LEVEL			0
+#define APC_LEVEL			1
 #define DISPATCH_LEVEL			2
-#define DEVICE_LEVEL			(DISPATCH_LEVEL + 1)
+#define DEVICE_LEVEL_BASE		4
+
+/* soft interrupts / bottom-half's are disabled at SOFT_IRQL */
+#define SOFT_IRQL			(DEVICE_LEVEL_BASE + 1)
+#define DIRQL				(DEVICE_LEVEL_BASE + 2)
 
 #define STATUS_WAIT_0			0
 #define STATUS_SUCCESS                  0
@@ -94,9 +99,9 @@
 #define THREAD_WAIT_OBJECTS		3
 #define MAX_WAIT_OBJECTS		64
 
-#define LOW_PRIORITY			1
+#define LOW_PRIORITY			0
 #define LOW_REALTIME_PRIORITY		16
-#define HIGH_PRIORITY			32
+#define HIGH_PRIORITY			31
 #define MAXIMUM_PRIORITY		32
 
 #define PROCESSOR_FEATURE_MAX		64
@@ -367,7 +372,7 @@ struct wait_block {
 	struct nt_list list;
 	struct task_struct *thread;
 	void *object;
-	void *thread_event;
+	int *wait_done;
 	USHORT wait_key;
 	USHORT wait_type;
 };
@@ -1086,14 +1091,20 @@ struct irp {
 
 #define IoSetNextIrpStackLocation(irp)				\
 do {								\
+	KIRQL _irql_;						\
+	IoAcquireCancelSpinLock(&_irql_);			\
 	(irp)->current_location--;				\
 	IoGetCurrentIrpStackLocation(irp)--;			\
+	IoReleaseCancelSpinLock(_irql_);			\
 } while (0)
 
 #define IoSkipCurrentIrpStackLocation(irp) 			\
 do {								\
+	KIRQL _irql_;						\
+	IoAcquireCancelSpinLock(&_irql_);			\
 	(irp)->current_location++;				\
 	IoGetCurrentIrpStackLocation(irp)++;			\
+	IoReleaseCancelSpinLock(_irql_);			\
 } while (0)
 
 static inline void
@@ -1158,15 +1169,6 @@ enum key_value_information_class {
 	KeyValueBasicInformation, KeyValueFullInformation,
 	KeyValuePartialInformation, KeyValueFullInformationAlign64,
 	KeyValuePartialInformationAlign64
-};
-
-struct object_attr {
-	ULONG length;
-	void *root_dir;
-	struct unicode_string *name;
-	ULONG attr;
-	void *security_descriptor;
-	void *security_qos;
 };
 
 struct file_name_info {
@@ -1367,6 +1369,10 @@ struct callback_object {
 	struct nt_list callback_funcs;
 	BOOLEAN allow_multiple_callbacks;
 	struct object_attributes *attributes;
+};
+
+enum section_inherit {
+	ViewShare = 1, ViewUnmap = 2
 };
 
 struct ksystem_time {

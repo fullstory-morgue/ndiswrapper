@@ -16,7 +16,7 @@
 #ifndef _NDISWRAPPER_H_
 #define _NDISWRAPPER_H_
 
-#define DRIVER_VERSION "1.42"
+#define DRIVER_VERSION "1.43"
 #define UTILS_VERSION "1.9"
 
 #define DRIVER_NAME "ndiswrapper"
@@ -81,9 +81,6 @@
 #define WARNING(fmt, ...) MSG(KERN_WARNING, fmt, ## __VA_ARGS__)
 #define ERROR(fmt, ...) MSG(KERN_ERR, fmt , ## __VA_ARGS__)
 #define INFO(fmt, ...) MSG(KERN_INFO, fmt , ## __VA_ARGS__)
-
-#define INFOEXIT(stmt) do { INFO("Exit"); stmt; } while(0)
-
 #define TODO() ERROR("not fully implemented (yet)")
 
 #define TRACE(fmt, ...) do { } while (0)
@@ -208,8 +205,10 @@ do {								       \
 #if defined DEBUG
 #define assert(expr)							\
 do {									\
-	if (!(expr))							\
+	if (!(expr)) {							\
 		ERROR("assertion '%s' failed", #expr);			\
+		dump_stack();						\
+	}								\
 } while (0)
 #else
 #define assert(expr) do { } while (0)

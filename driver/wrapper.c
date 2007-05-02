@@ -28,10 +28,6 @@ int debug = DEBUG;
 int debug = 0;
 #endif
 
-/* use own workqueue instead of shared one, to avoid depriving
- * others */
-workqueue_struct_t *wrap_wq;
-
 WRAP_MODULE_PARM_STRING(if_name, 0400);
 MODULE_PARM_DESC(if_name, "Network interface name or template "
 		 "(default: wlan%d)");
@@ -68,14 +64,12 @@ static void module_cleanup(void)
 	usb_exit();
 #endif
 
-	if (wrap_wq)
-		destroy_workqueue(wrap_wq);
 	wrap_procfs_remove();
-	ndis_exit();
-	ntoskernel_exit();
-	crt_exit();
-	rtl_exit();
 	wrapndis_exit();
+	ndis_exit();
+	rtl_exit();
+	crt_exit();
+	ntoskernel_exit();
 	wrapmem_exit();
 }
 
@@ -90,10 +84,8 @@ static int __init wrapper_init(void)
 #endif
 		);
 
-	wrap_wq = create_singlethread_workqueue("wrap_wq");
-
-	if (!wrap_wq || wrapmem_init() || crt_init() || rtl_init() ||
-	    ntoskernel_init() || ndis_init() || wrapndis_init() ||
+	if (wrapmem_init() || ntoskernel_init() || crt_init() ||
+	    rtl_init() || ndis_init() || wrapndis_init() ||
 #ifdef CONFIG_USB
 	    usb_init() ||
 #endif
