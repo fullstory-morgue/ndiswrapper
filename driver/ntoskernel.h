@@ -107,15 +107,6 @@
 })
 #endif
 
-#ifndef in_atomic
-#ifdef CONFIG_PREEMPT
-#define in_atomic()					\
-	((preempt_get_count() & ~PREEMPT_ACTIVE) != 0)
-#else
-#define in_atomic() (in_interrupt())
-#endif // CONFIG_PREEMPT
-#endif // in_atomic
-
 #endif // LINUX_VERSION_CODE
 
 /* Wait in wait_state (e.g., TASK_INTERRUPTIBLE) for condition to
@@ -130,15 +121,19 @@
  *    0 if timedout (condition may have become true at the same time)
  */
 
-#define wrap_wait_event(condition, timeout, wait_state)		\
+#define wait_condition(condition, timeout, wait_state)		\
 ({								\
 	long ret = timeout ? timeout : 1;			\
-	while (!(condition)) {					\
+	while (1) {						\
 		if (signal_pending(current)) {			\
 			ret = -ERESTARTSYS;			\
 			break;					\
 		}						\
 		set_current_state(wait_state);			\
+		if (condition) {				\
+			__set_current_state(TASK_RUNNING);	\
+			break;					\
+		}						\
 		if (timeout) {					\
 			ret = schedule_timeout(ret);		\
 			if (!ret)				\
@@ -146,7 +141,6 @@
 		} else						\
 			schedule();				\
 	}							\
-	current->state = TASK_RUNNING;				\
 	ret;							\
 })
 
@@ -214,6 +208,7 @@ typedef void *worker_param_t;
 
 #endif // USE_OWN_WQ
 
+struct nt_thread *wrap_worker_init(workqueue_struct_t *wq);
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,9)
 #define WRAP_MODULE_PARM_INT(name, perm) module_param(name, int, perm)
@@ -247,19 +242,53 @@ typedef void *worker_param_t;
 #define CHECKSUM_HW CHECKSUM_PARTIAL
 #endif
 
-/* this ugly hack is to handle RH kernels; I don't know any better,
- * but this has to be fixed soon */
-#ifndef rt_task
-#define rt_task(p) ((p)->prio < MAX_RT_PRIO)
-#endif
+#define atomic_unary_op(var, size, oper)				\
+do {									\
+	if (size == 1)							\
+		__asm__ __volatile__(					\
+			LOCK_PREFIX oper "b %b0\n\t" : "+m" (var));	\
+	else if (size == 2)						\
+		__asm__ __volatile__(					\
+			LOCK_PREFIX oper "w %w0\n\t" : "+m" (var));	\
+	else if (size == 4)						\
+		__asm__ __volatile__(					\
+			LOCK_PREFIX oper "l %0\n\t" : "+m" (var));	\
+	else if (size == 8)						\
+		__asm__ __volatile__(					\
+			LOCK_PREFIX oper "q %q0\n\t" : "+m" (var));	\
+	else {								\
+		extern void _invalid_op_size_(void);			\
+		_invalid_op_size_();					\
+	}								\
+} while (0)
+
+#define atomic_inc_var_size(var, size) atomic_unary_op(var, size, "inc")
+
+#define atomic_inc_var(var) atomic_inc_var_size(var, sizeof(var))
+
+#define atomic_dec_var_size(var, size) atomic_unary_op(var, size, "dec")
+
+#define atomic_dec_var(var) atomic_dec_var_size(var, sizeof(var))
+
+#define pre_atomic_add(var, i)					\
+({								\
+	typeof(var) pre;					\
+	__asm__ __volatile__(					\
+		LOCK_PREFIX "xadd %0, %1\n\t"			\
+		: "=r"(pre), "+m"(var)				\
+		: "0"(i));					\
+	pre;							\
+})
+
+#define post_atomic_add(var, i) (pre_atomic_add(var, i) + i)
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
 
-#ifndef preempt_enable
-#define preempt_enable()  do { } while (0)
-#endif
-#ifndef preempt_disable
-#define preempt_disable() do { } while (0)
+#if !defined(CONFIG_PREEMPT) && !defined(preempt_enable)
+extern volatile int preempt_count;
+#define preempt_enable()  do { atomic_inc_var(preempt_count); } while (0)
+#define preempt_disable()  do { atomic_dec_var(preempt_count); } while (0)
+#define in_atomic() preempt_count
 #endif
 
 #ifndef preempt_enable_no_resched
@@ -371,7 +400,7 @@ typedef u32 pm_message_t;
 #define print_sp() do {				\
 		void *sp;			\
 		get_sp(sp);			\
-		TRACE1("sp: %p", sp);	\
+		TRACE1("sp: %p", sp);		\
 	} while (0)
 
 //#define DEBUG_IRQL 1
@@ -471,7 +500,7 @@ struct ntos_work_item {
 	struct nt_list list;
 	void *arg1;
 	void *arg2;
-	void (*func)(void *arg1, void *arg2) wstdcall;
+	NTOS_WORK_FUNC func;
 };
 
 struct wrap_device_setting {
@@ -560,22 +589,19 @@ struct wrap_device {
 	(WRAP_DEVICE(dev_bus) == WRAP_BLUETOOTH_DEVICE1 ||	\
 	 WRAP_DEVICE(dev_bus) == WRAP_BLUETOOTH_DEVICE2)
 
-extern workqueue_struct_t *wrap_wq;
+extern workqueue_struct_t *ndis_wq;
 #define schedule_ndis_work(work_struct) queue_work(ndis_wq, (work_struct))
-#define schedule_wrap_work(work_struct) queue_work(wrap_wq, (work_struct))
 
-/* Normally workqueue for ntos is not required, as worker entries in
- * it are not supposed to wait; however, it helps to have separate
- * workqueue so keyboard etc. work when kernel crashes */
+extern workqueue_struct_t *wrapndis_wq;
+#define schedule_wrapndis_work(work_struct)	\
+	queue_work(wrapndis_wq, (work_struct))
 
-#ifdef USE_OWN_WQ
-#define USE_OWN_NTOS_WORKQUEUE 1
-#endif
+#define USE_NTOS_WQ 1
 
-//#define USE_OWN_NTOS_WORKQUEUE 1
-#ifdef USE_OWN_NTOS_WORKQUEUE
+#ifdef USE_NTOS_WQ
 extern workqueue_struct_t *ntos_wq;
 #define schedule_ntos_work(work_struct) queue_work(ntos_wq, (work_struct))
+#define schedule_work(work_struct) queue_work(ntos_wq, (work_struct))
 #else
 #define schedule_ntos_work(work_struct) schedule_work(work_struct)
 #endif
@@ -637,7 +663,6 @@ void KefReleaseSpinLockFromDpcLevel(NT_SPIN_LOCK *lock) wfastcall;
 
 LONG ObfReferenceObject(void *object) wfastcall;
 void ObfDereferenceObject(void *object) wfastcall;
-int dereference_object(void *object);
 
 #define ObReferenceObject(object) ObfReferenceObject(object)
 #define ObDereferenceObject(object) ObfDereferenceObject(object)
@@ -668,8 +693,9 @@ LONG KeSetEvent(struct nt_event *nt_event, KPRIORITY incr,
 LONG KeResetEvent(struct nt_event *nt_event) wstdcall;
 void KeClearEvent(struct nt_event *nt_event) wstdcall;
 void KeInitializeDpc(struct kdpc *kdpc, void *func, void *ctx) wstdcall;
-BOOLEAN KeInsertQueueDpc(struct kdpc *kdpc, void *arg1, void *arg2) wstdcall;
-BOOLEAN KeRemoveQueueDpc(struct kdpc *kdpc) wstdcall;
+BOOLEAN queue_kdpc(struct kdpc *kdpc);
+BOOLEAN dequeue_kdpc(struct kdpc *kdpc);
+
 void KeFlushQueuedDpcs(void) wstdcall;
 NTSTATUS KeWaitForSingleObject(void *object, KWAIT_REASON reason,
 			       KPROCESSOR_MODE waitmode, BOOLEAN alertable,
@@ -756,7 +782,7 @@ BOOLEAN KeSetTimer(struct nt_timer *nt_timer, LARGE_INTEGER duetime_ticks,
 		   struct kdpc *kdpc) wstdcall;
 BOOLEAN KeCancelTimer(struct nt_timer *nt_timer) wstdcall;
 void KeInitializeDpc(struct kdpc *kdpc, void *func, void *ctx) wstdcall;
-struct task_struct *KeGetCurrentThread(void) wstdcall;
+struct nt_thread *KeGetCurrentThread(void) wstdcall;
 NTSTATUS ObReferenceObjectByHandle(void *handle, ACCESS_MASK desired_access,
 				   void *obj_type, KPROCESSOR_MODE access_mode,
 				   void **object, void *handle_info) wstdcall;
@@ -785,25 +811,24 @@ do {									\
 static inline KIRQL current_irql(void)
 {
 	if (in_irq() || irqs_disabled())
-		EXIT6(return DEVICE_LEVEL);
-	if (
-#ifdef CONFIG_PREEMPT_RT
-		in_atomic() ||
-#endif
-		in_interrupt())
+		EXIT6(return DIRQL);
+	if (in_interrupt())
+		EXIT6(return SOFT_IRQL);
+	if (in_atomic())
 		EXIT6(return DISPATCH_LEVEL);
-	EXIT6(return PASSIVE_LEVEL);
+	else
+		EXIT6(return PASSIVE_LEVEL);
 }
 
 static inline KIRQL raise_irql(KIRQL newirql)
 {
 	KIRQL irql = current_irql();
-//	assert (newirql == DISPATCH_LEVEL);
-	if (irql < DISPATCH_LEVEL && newirql == DISPATCH_LEVEL) {
-		local_bh_disable();
-		preempt_disable();
-	}
 	TRACE6("%d, %d", irql, newirql);
+	assert(newirql <= DISPATCH_LEVEL);
+	assert(irql <= newirql);
+	if (irql < DISPATCH_LEVEL && newirql == DISPATCH_LEVEL)
+		preempt_disable();
+
 	return irql;
 }
 
@@ -811,14 +836,10 @@ static inline void lower_irql(KIRQL oldirql)
 {
 	KIRQL irql = current_irql();
 	TRACE6("%d, %d", irql, oldirql);
-	DBG_BLOCK(2) {
-		if (irql < oldirql)
-			ERROR("invalid irql: %d < %d", irql, oldirql);
-	}
-	if (oldirql < DISPATCH_LEVEL && irql == DISPATCH_LEVEL) {
+	assert(irql <= DISPATCH_LEVEL);
+	assert(oldirql <= irql);
+	if (oldirql < DISPATCH_LEVEL && irql == DISPATCH_LEVEL)
 		preempt_enable();
-		local_bh_enable();
-	}
 }
 
 #define gfp_irql() (current_irql() < DISPATCH_LEVEL ? GFP_KERNEL : GFP_ATOMIC)
@@ -844,10 +865,9 @@ static inline void  nt_spin_lock_init(NT_SPIN_LOCK *lock)
 static inline void nt_spin_lock(NT_SPIN_LOCK *lock)
 {
 	__asm__ __volatile__(
-		"\n"
 		"1:\t"
 		"  xchgl %1, %0\n\t"
-		"  cmpl %2, %1\n\t"
+		"  testl %1, %1\n\t"
 		"  je 3f\n"
 		"2:\t"
 		"  rep; nop\n\t"
@@ -887,6 +907,20 @@ static inline void nt_spin_unlock_irql(NT_SPIN_LOCK *lock, KIRQL oldirql)
 	lower_irql(oldirql);
 }
 
+static inline void nt_spin_lock_bh(NT_SPIN_LOCK *lock)
+{
+	local_bh_disable();
+	preempt_disable();
+	nt_spin_lock(lock);
+}
+
+static inline void nt_spin_unlock_bh(NT_SPIN_LOCK *lock)
+{
+	nt_spin_unlock(lock);
+	preempt_enable_no_resched();
+	local_bh_enable();
+}
+
 #ifdef CONFIG_PREEMPT_RT
 #define save_local_irq(flags) raw_local_irq_save(flags)
 #define restore_local_irq(flags) raw_local_irq_restore(flags)
@@ -908,46 +942,6 @@ do {									\
 	restore_local_irq(flags);					\
 	preempt_enable();						\
 } while (0)
-
-#define atomic_unary_op(var, size, oper)				\
-do {									\
-	if (size == 1)							\
-		__asm__ __volatile__(					\
-			LOCK_PREFIX oper "b %b0\n\t" : "+m" (var));	\
-	else if (size == 2)						\
-		__asm__ __volatile__(					\
-			LOCK_PREFIX oper "w %w0\n\t" : "+m" (var));	\
-	else if (size == 4)						\
-		__asm__ __volatile__(					\
-			LOCK_PREFIX oper "l %0\n\t" : "+m" (var));	\
-	else if (size == 8)						\
-		__asm__ __volatile__(					\
-			LOCK_PREFIX oper "q %q0\n\t" : "+m" (var));	\
-	else {								\
-		extern void _invalid_op_size_(void);			\
-		_invalid_op_size_();					\
-	}								\
-} while (0)
-
-#define atomic_inc_var_size(var, size) atomic_unary_op(var, size, "inc")
-
-#define atomic_inc_var(var) atomic_inc_var_size(var, sizeof(var))
-
-#define atomic_dec_var_size(var, size) atomic_unary_op(var, size, "dec")
-
-#define atomic_dec_var(var) atomic_dec_var_size(var, sizeof(var))
-
-#define pre_atomic_add(var, i)					\
-({								\
-	typeof(var) pre;					\
-	__asm__ __volatile__(					\
-		LOCK_PREFIX "xadd %0, %1\n\t"			\
-		: "=r"(pre), "+m"(var)				\
-		: "0"(i));					\
-	pre;							\
-})
-
-#define post_atomic_add(var, i) (pre_atomic_add(var, i) + i)
 
 #define atomic_insert_list_head(oldhead, head, newhead)			\
 	do {								\

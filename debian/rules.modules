@@ -20,7 +20,7 @@ binary-modules: kdist_config
 
 	# build and install the module
 	$(MAKE) -C $(CURDIR) install \
-	KSRC=$(KSRC) KBUILD=$(KSRC) KVER=$(KVERS) \
+	KSRC=$(KSRC) KBUILD=$(KSRC) KVERS=$(KVERS) \
 	DIST_DESTDIR=debian/ndiswrapper-modules-$(KVERS)/lib/modules/$(KVERS)/misc/
 
 	dh_installdocs

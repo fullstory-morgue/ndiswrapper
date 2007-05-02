@@ -204,6 +204,11 @@ struct ndis_task_tcp_large_send {
 	BOOLEAN ip_opts;
 };
 
+struct ndis_packet_stack {
+	ULONG_PTR IM_reserved[2];
+	ULONG_PTR ndis_reserved[4];
+};
+
 enum ndis_per_packet_info {
 	TcpIpChecksumPacketInfo, IpSecPacketInfo, TcpLargeSendPacketInfo,
 	ClassificationHandlePacketInfo, NdisReserved,
@@ -603,7 +608,7 @@ enum ndis_media_stream_mode {
 
 enum wrapper_work {
 	LINK_STATUS_CHANGED, SET_MULTICAST_LIST, COLLECT_IW_STATS,
-	MINIPORT_RESET, SHUTDOWN
+	HANGCHECK, SHUTDOWN
 };
 
 struct encr_info {
@@ -824,8 +829,8 @@ struct wrap_ndis_device {
 	struct wrap_device *wd;
 	struct net_device *net_dev;
 	void *shutdown_ctx;
-	struct tasklet_struct irq_tasklet;
 	struct ndis_mp_interrupt *mp_interrupt;
+	struct kdpc irq_kdpc;
 	unsigned long mem_start;
 	unsigned long mem_end;
 

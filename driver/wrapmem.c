@@ -26,6 +26,13 @@ static struct nt_list allocs;
 static struct nt_list slack_allocs;
 static NT_SPIN_LOCK alloc_lock;
 
+struct vmem_block {
+	struct nt_list list;
+	int size;
+};
+
+static struct nt_list vmem_list;
+
 #if defined(ALLOC_DEBUG)
 struct alloc_info {
 	enum alloc_type type;
@@ -282,14 +289,14 @@ void *wrap_ExAllocatePoolWithTag(enum pool_type pool_type, SIZE_T size,
 
 	ENTER4("pool_type: %d, size: %lu, tag: %u", pool_type, size, tag);
 	addr = ExAllocatePoolWithTag(pool_type, size, tag);
-	if (addr) {
-		info = addr - sizeof(unsigned long) - sizeof(*info);
-		info->file = file;
-		info->line = line;
+	if (!addr)
+		return NULL;
+	info = addr - sizeof(*info);
+	info->file = file;
+	info->line = line;
 #if ALLOC_DEBUG > 2
-		info->tag = tag;
+	info->tag = tag;
 #endif
-	}
 	EXIT4(return addr);
 }
 #endif
@@ -308,6 +315,7 @@ int wrapmem_init(void)
 {
 	InitializeListHead(&allocs);
 	InitializeListHead(&slack_allocs);
+	InitializeListHead(&vmem_list);
 	nt_spin_lock_init(&alloc_lock);
 	return 0;
 }

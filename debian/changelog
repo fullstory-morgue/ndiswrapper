@@ -1,3 +1,10 @@
+ndiswrapper (1.43-1) unstable; urgency=low
+
+  * New upstream release.
+  * Fix KVER -> KVERS typo in debian/rules.modules. (Closes: #421690)
+
+ -- Kel Modderman <kel@otaku42.de>  Wed, 02 May 2007 22:00:26 +1000
+
 ndiswrapper (1.42-1) unstable; urgency=low
 
   * New upstream release.

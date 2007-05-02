@@ -23,11 +23,13 @@
 #define MAX_ALLOCATED_NDIS_PACKETS 20
 #define MAX_ALLOCATED_NDIS_BUFFERS 20
 
-static workqueue_struct_t *ndis_wq;
 static void ndis_worker(worker_param_t dummy);
 static work_struct_t ndis_work;
 static struct nt_list ndis_work_list;
 static NT_SPIN_LOCK ndis_work_list_lock;
+
+workqueue_struct_t *ndis_wq;
+static struct nt_thread *ndis_worker_thread;
 
 extern struct semaphore loader_mutex;
 
@@ -154,6 +156,12 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisAllocateMemoryWithTag,3)
 	(void **dest, UINT length, ULONG tag)
 {
 	void *addr;
+	KIRQL irql = current_irql();
+
+	if (irql > DISPATCH_LEVEL) {
+		WARNING("invalid irql: %d", irql);
+		dump_stack();
+	}
 	addr = ExAllocatePoolWithTag(NonPagedPool, length, tag);
 	TRACE4("%p", addr);
 	if (addr) {
@@ -1080,7 +1088,6 @@ wstdcall void WIN_FUNC(NdisAllocateBuffer,5)
 	 struct ndis_buffer_pool *pool, void *virt, UINT length)
 {
 	ndis_buffer *descr;
-	KIRQL irql;
 
 	ENTER4("pool: %p, allocated: %d", pool, pool->num_allocated_descr);
 	if (!pool) {
@@ -1092,19 +1099,19 @@ wstdcall void WIN_FUNC(NdisAllocateBuffer,5)
 			WARNING("pool %p is full: %d(%d)", pool,
 				pool->num_allocated_descr, pool->max_descr);
 	}
-	irql = nt_spin_lock_irql(&pool->lock, DISPATCH_LEVEL);
+	nt_spin_lock_bh(&pool->lock);
 	if (pool->free_descr) {
 		typeof(descr->flags) flags;
 		descr = pool->free_descr;
 		pool->free_descr = descr->next;
-		nt_spin_unlock_irql(&pool->lock, irql);
+		nt_spin_unlock_bh(&pool->lock);
 		flags = descr->flags;
 		memset(descr, 0, sizeof(*descr));
 		MmInitializeMdl(descr, virt, length);
 		if (flags & MDL_CACHE_ALLOCATED)
 			descr->flags |= MDL_CACHE_ALLOCATED;
 	} else {
-		nt_spin_unlock_irql(&pool->lock, irql);
+		nt_spin_unlock_bh(&pool->lock);
 		descr = allocate_init_mdl(virt, length);
 		if (!descr) {
 			WARNING("couldn't allocate buffer");
@@ -1129,7 +1136,6 @@ wstdcall void WIN_FUNC(NdisFreeBuffer,1)
 	(ndis_buffer *buffer)
 {
 	struct ndis_buffer_pool *pool;
-	KIRQL irql;
 
 	ENTER4("%p", buffer);
 	if (!buffer || !buffer->pool) {
@@ -1137,19 +1143,19 @@ wstdcall void WIN_FUNC(NdisFreeBuffer,1)
 		EXIT4(return);
 	}
 	pool = buffer->pool;
-	irql = nt_spin_lock_irql(&pool->lock, DISPATCH_LEVEL);
+	nt_spin_lock_bh(&pool->lock);
 	if (pool->num_allocated_descr > MAX_ALLOCATED_NDIS_BUFFERS) {
 		/* NB NB NB: set mdl's 'pool' field to NULL before
 		 * calling free_mdl; otherwise free_mdl calls
 		 * NdisFreeBuffer causing deadlock (for spinlock) */
 		pool->num_allocated_descr--;
 		buffer->pool = NULL;
-		nt_spin_unlock_irql(&pool->lock, irql);
+		nt_spin_unlock_bh(&pool->lock);
 		free_mdl(buffer);
 	} else {
 		buffer->next = pool->free_descr;
 		pool->free_descr = buffer;
-		nt_spin_unlock_irql(&pool->lock, irql);
+		nt_spin_unlock_bh(&pool->lock);
 	}
 	EXIT4(return);
 }
@@ -1158,14 +1164,13 @@ wstdcall void WIN_FUNC(NdisFreeBufferPool,1)
 	(struct ndis_buffer_pool *pool)
 {
 	ndis_buffer *cur, *next;
-	KIRQL irql;
 
 	TRACE3("pool: %p", pool);
 	if (!pool) {
 		WARNING("invalid pool");
 		EXIT3(return);
 	}
-	irql = nt_spin_lock_irql(&pool->lock, DISPATCH_LEVEL);
+	nt_spin_lock_bh(&pool->lock);
 	cur = pool->free_descr;
 	while (cur) {
 		next = cur->next;
@@ -1173,7 +1178,7 @@ wstdcall void WIN_FUNC(NdisFreeBufferPool,1)
 		free_mdl(cur);
 		cur = next;
 	}
-	nt_spin_unlock_irql(&pool->lock, irql);
+	nt_spin_unlock_bh(&pool->lock);
 	kfree(pool);
 	pool = NULL;
 	EXIT3(return);
@@ -1355,14 +1360,13 @@ wstdcall void WIN_FUNC(NdisFreePacketPool,1)
 	(struct ndis_packet_pool *pool)
 {
 	struct ndis_packet *packet, *next;
-	KIRQL irql;
 
 	ENTER3("pool: %p", pool);
 	if (!pool) {
 		WARNING("invalid pool");
 		EXIT3(return);
 	}
-	irql = nt_spin_lock_irql(&pool->lock, DISPATCH_LEVEL);
+	nt_spin_lock_bh(&pool->lock);
 	packet = pool->free_descr;
 	while (packet) {
 		next = (struct ndis_packet *)packet->reserved[0];
@@ -1372,7 +1376,7 @@ wstdcall void WIN_FUNC(NdisFreePacketPool,1)
 	pool->num_allocated_descr = 0;
 	pool->num_used_descr = 0;
 	pool->free_descr = NULL;
-	nt_spin_unlock_irql(&pool->lock, irql);
+	nt_spin_unlock_bh(&pool->lock);
 	kfree(pool);
 	EXIT3(return);
 }
@@ -1389,7 +1393,6 @@ wstdcall void WIN_FUNC(NdisAllocatePacket,3)
 {
 	struct ndis_packet *packet;
 	int packet_length;
-	KIRQL irql;
 
 	ENTER4("pool: %p", pool);
 	if (!pool) {
@@ -1404,13 +1407,13 @@ wstdcall void WIN_FUNC(NdisAllocatePacket,3)
 	/* packet has space for 1 byte in protocol_reserved field */
 	packet_length = sizeof(*packet) - 1 + pool->proto_rsvd_length +
 		sizeof(struct ndis_packet_oob_data);
-	irql = nt_spin_lock_irql(&pool->lock, DISPATCH_LEVEL);
+	nt_spin_lock_bh(&pool->lock);
 	if (pool->free_descr) {
 		packet = pool->free_descr;
 		pool->free_descr = (void *)(ULONG_PTR)packet->reserved[0];
-		nt_spin_unlock_irql(&pool->lock, irql);
+		nt_spin_unlock_bh(&pool->lock);
 	} else {
-		nt_spin_unlock_irql(&pool->lock, irql);
+		nt_spin_unlock_bh(&pool->lock);
 		packet = kmalloc(packet_length, gfp_irql());
 		if (!packet) {
 			WARNING("couldn't allocate packet");
@@ -1443,7 +1446,6 @@ wstdcall void WIN_FUNC(NdisFreePacket,1)
 	(struct ndis_packet *packet)
 {
 	struct ndis_packet_pool *pool;
-	KIRQL irql;
 
 	ENTER3("packet: %p, pool: %p", packet, packet->private.pool);
 	pool = packet->private.pool;
@@ -1452,17 +1454,50 @@ wstdcall void WIN_FUNC(NdisFreePacket,1)
 		EXIT4(return);
 	}
 	atomic_dec_var(pool->num_used_descr);
-	irql = nt_spin_lock_irql(&pool->lock, DISPATCH_LEVEL);
+	if (packet->reserved[1]) {
+		TRACE3("%p, %p", packet, (void *)packet->reserved[1]);
+		kfree((void *)packet->reserved[1]);
+		packet->reserved[1] = 0;
+	}
+	nt_spin_lock_bh(&pool->lock);
 	if (pool->num_allocated_descr > MAX_ALLOCATED_NDIS_PACKETS) {
-		nt_spin_unlock_irql(&pool->lock, irql);
-		atomic_dec_var(pool->num_allocated_descr);
+		pool->num_allocated_descr--;
+		nt_spin_unlock_bh(&pool->lock);
 		kfree(packet);
 	} else {
 		packet->reserved[0] = (ULONG_PTR)pool->free_descr;
 		pool->free_descr = packet;
-		nt_spin_unlock_irql(&pool->lock, irql);
+		nt_spin_unlock_bh(&pool->lock);
 	}
 	EXIT4(return);
+}
+
+wstdcall struct ndis_packet_stack *WIN_FUNC(NdisIMGetCurrentPacketStack,2)
+	(struct ndis_packet *packet, BOOLEAN *stacks_remain)
+{
+	struct ndis_packet_stack *stack;
+
+	if (!packet->reserved[1]) {
+		stack = kmalloc(2 * sizeof(*stack), gfp_irql());
+		if (stack)
+			memset(stack, 0, 2 * sizeof(*stack));
+		TRACE3("%p, %p", packet, stack);
+		packet->reserved[1] = (typeof(packet->reserved[1]))stack;
+	} else {
+		stack = (void *)packet->reserved[1];;
+		if (xchg(&stack->ndis_reserved[0], 1)) {
+			stack++;
+			if (xchg(&stack->ndis_reserved[0], 1))
+				stack = NULL;
+		}
+		TRACE3("%p", stack);
+	}
+	if (stack)
+		*stacks_remain = TRUE;
+	else
+		*stacks_remain = FALSE;
+
+	EXIT3(return stack);
 }
 
 wstdcall void WIN_FUNC(NdisCopyFromPacketToPacketSafe,7)
@@ -1759,28 +1794,35 @@ wstdcall void WIN_FUNC(NdisMDeregisterAdapterShutdownHandler,1)
  * For now, handle these cases with two separate irq handlers based on
  * observation of these two drivers. However, it is likely not
  * correct. */
-static void deserialized_irq_handler(unsigned long data)
+wstdcall void deserialized_irq_handler(struct kdpc *kdpc, void *ctx,
+				       void *arg1, void *arg2)
 {
-	struct ndis_mp_interrupt *mp_interrupt = (typeof(mp_interrupt))data;
-	struct wrap_ndis_device *wnd = mp_interrupt->nmb->wnd;
+	struct wrap_ndis_device *wnd;
+	ndis_interrupt_handler irq_handler;
+	struct miniport_char *miniport;
 
-	LIN2WIN1(mp_interrupt->mp_dpc, wnd->nmb->adapter_ctx);
-	if (mp_interrupt->enable) {
-		struct miniport_char *miniport;
-		miniport = &wnd->wd->driver->ndis_driver->miniport;
+	wnd = ctx;
+	irq_handler = arg1;
+	LIN2WIN1(irq_handler, wnd->nmb->adapter_ctx);
+	miniport = arg2;
+	if (miniport->enable_interrupt)
 		LIN2WIN1(miniport->enable_interrupt, wnd->nmb->adapter_ctx);
-	}
 }
+WIN_FUNC_DECL(deserialized_irq_handler,4)
 
-static void serialized_irq_handler(unsigned long data)
+wstdcall void serialized_irq_handler(struct kdpc *kdpc, void *ctx,
+				     void *arg1, void *arg2)
 {
-	struct ndis_mp_interrupt *mp_interrupt = (typeof(mp_interrupt))data;
-	struct wrap_ndis_device *wnd = mp_interrupt->nmb->wnd;
+	struct wrap_ndis_device *wnd;
+	ndis_interrupt_handler irq_handler;
 
+	wnd = ctx;
+	irq_handler = arg1;
 	serialize_lock(wnd);
-	LIN2WIN1(mp_interrupt->mp_dpc, wnd->nmb->adapter_ctx);
+	LIN2WIN1(irq_handler, arg2);
 	serialize_unlock(wnd);
 }
+WIN_FUNC_DECL(serialized_irq_handler,4)
 
 irqreturn_t ndis_isr(int irq, void *data ISR_PT_REGS_PARAM_DECL)
 {
@@ -1803,8 +1845,10 @@ irqreturn_t ndis_isr(int irq, void *data ISR_PT_REGS_PARAM_DECL)
 	}
 	nt_spin_unlock(&mp_interrupt->lock);
 	if (recognized) {
-		if (queue_handler)
-			tasklet_schedule(&wnd->irq_tasklet);
+		if (queue_handler) {
+			TRACE5("%p", &wnd->irq_kdpc);
+			queue_kdpc(&wnd->irq_kdpc);
+		}
 		EXIT6(return IRQ_HANDLED);
 	}
 	EXIT6(return IRQ_NONE);
@@ -1837,9 +1881,20 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMRegisterInterrupt,7)
 	else
 		mp_interrupt->enable = FALSE;
 
-	tasklet_init(&wnd->irq_tasklet, deserialized_driver(wnd) ?
-		     deserialized_irq_handler : serialized_irq_handler,
-		     (unsigned long)mp_interrupt);
+	if (deserialized_driver(wnd)) {
+		KeInitializeDpc(&wnd->irq_kdpc,
+				WIN_FUNC_PTR(deserialized_irq_handler,4),
+				nmb->wnd);
+		wnd->irq_kdpc.arg1 = miniport->handle_interrupt;
+		wnd->irq_kdpc.arg2 = miniport;
+	} else {
+		KeInitializeDpc(&wnd->irq_kdpc,
+				WIN_FUNC_PTR(serialized_irq_handler,4),
+				nmb->wnd);
+		wnd->irq_kdpc.arg1 = miniport->handle_interrupt;
+		wnd->irq_kdpc.arg2 = nmb->adapter_ctx;
+	}
+
 	if (request_irq(vector, ndis_isr, req_isr ? IRQF_SHARED : 0,
 			wnd->net_dev->name, mp_interrupt)) {
 		printk(KERN_WARNING "%s: request for IRQ %d failed\n",
@@ -1857,8 +1912,9 @@ wstdcall void WIN_FUNC(NdisMDeregisterInterrupt,1)
 
 	ENTER1("%p", mp_interrupt);
 	nmb = mp_interrupt->nmb;
+	if (dequeue_kdpc(&nmb->wnd->irq_kdpc))
+		TRACE2("interrupt kdpc was pending");
 	free_irq(mp_interrupt->irq, mp_interrupt);
-	tasklet_kill(&nmb->wnd->irq_tasklet);
 	mp_interrupt->nmb = NULL;
 	nmb->wnd->mp_interrupt = NULL;
 	EXIT1(return);
@@ -1896,14 +1952,14 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 			break;
 		netif_carrier_off(wnd->net_dev);
 		set_bit(LINK_STATUS_CHANGED, &wnd->wrap_ndis_pending_work);
-		schedule_wrap_work(&wnd->wrap_ndis_work);
+		schedule_wrapndis_work(&wnd->wrap_ndis_work);
 		break;
 	case NDIS_STATUS_MEDIA_CONNECT:
 		if (netif_carrier_ok(wnd->net_dev))
 			break;
 		netif_carrier_on(wnd->net_dev);
 		set_bit(LINK_STATUS_CHANGED, &wnd->wrap_ndis_pending_work);
-		schedule_wrap_work(&wnd->wrap_ndis_work);
+		schedule_wrapndis_work(&wnd->wrap_ndis_work);
 		break;
 	case NDIS_STATUS_MEDIA_SPECIFIC_INDICATION:
 		if (!buf)
@@ -1983,13 +2039,13 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 			radio_status = buf;
 			if (radio_status->radio_state ==
 			    Ndis802_11RadioStatusOn)
-				INFO("radio is turned on");
+				TRACE2("radio is turned on");
 			else if (radio_status->radio_state ==
 				 Ndis802_11RadioStatusHardwareOff)
-				INFO("radio is turned off by hardware");
+				TRACE2("radio is turned off by hardware");
 			else if (radio_status->radio_state ==
 				 Ndis802_11RadioStatusSoftwareOff)
-				INFO("radio is turned off by software");
+				TRACE2("radio is turned off by software");
 			break;
 #endif
 		default:
@@ -2012,9 +2068,8 @@ wstdcall void WIN_FUNC(NdisMIndicateStatusComplete,1)
 {
 	struct wrap_ndis_device *wnd = nmb->wnd;
 	ENTER2("%p", wnd);
-	schedule_wrap_work(&wnd->wrap_ndis_work);
 	if (wnd->tx_ok)
-		schedule_wrap_work(&wnd->tx_work);
+		schedule_wrapndis_work(&wnd->tx_work);
 }
 
 /* called via function pointer */
@@ -2047,7 +2102,7 @@ wstdcall void NdisMSendComplete(struct ndis_miniport_block *nmb,
 		 */
 		if (xchg(&wnd->tx_ok, 1) == 0) {
 			TRACE3("%d, %d", wnd->tx_ring_start, wnd->tx_ring_end);
-			schedule_wrap_work(&wnd->tx_work);
+			schedule_wrapndis_work(&wnd->tx_work);
 		}
 	}
 	EXIT3(return);
@@ -2059,7 +2114,7 @@ wstdcall void NdisMSendResourcesAvailable(struct ndis_miniport_block *nmb)
 	struct wrap_ndis_device *wnd = nmb->wnd;
 	ENTER3("%d, %d", wnd->tx_ring_start, wnd->tx_ring_end);
 	wnd->tx_ok = 1;
-	schedule_wrap_work(&wnd->tx_work);
+	schedule_wrapndis_work(&wnd->tx_work);
 	EXIT3(return);
 }
 
@@ -2709,6 +2764,7 @@ wstdcall void WIN_FUNC(NdisMRemoveMiniport,1)
 
 #include "ndis_exports.h"
 
+/* ndis_init_device is called for each device */
 int ndis_init_device(struct wrap_ndis_device *wnd)
 {
 	struct ndis_miniport_block *nmb = wnd->nmb;
@@ -2738,7 +2794,7 @@ int ndis_init_device(struct wrap_ndis_device *wnd)
 	return 0;
 }
 
-/* ndis_exit_device is called for each handle */
+/* ndis_exit_device is called for each device */
 void ndis_exit_device(struct wrap_ndis_device *wnd)
 {
 	struct wrap_device_setting *setting;
@@ -2764,11 +2820,18 @@ void ndis_exit_device(struct wrap_ndis_device *wnd)
 /* ndis_init is called once when module is loaded */
 int ndis_init(void)
 {
-	ndis_wq = create_singlethread_workqueue("ndis_wq");
 	InitializeListHead(&ndis_work_list);
 	nt_spin_lock_init(&ndis_work_list_lock);
 	initialize_work(&ndis_work, ndis_worker, NULL);
 
+	ndis_wq = create_singlethread_workqueue("ndis_wq");
+	if (!ndis_wq) {
+		WARNING("couldn't create worker thread");
+		EXIT1(return -ENOMEM);
+	}
+
+	ndis_worker_thread = wrap_worker_init(ndis_wq);
+	TRACE1("%p", ndis_worker_thread);
 	return 0;
 }
 
@@ -2776,6 +2839,10 @@ int ndis_init(void)
 void ndis_exit(void)
 {
 	ENTER1("");
-	destroy_workqueue(ndis_wq);
+	if (ndis_wq)
+		destroy_workqueue(ndis_wq);
+	TRACE1("%p", ndis_worker_thread);
+	if (ndis_worker_thread)
+		ObDereferenceObject(ndis_worker_thread);
 	EXIT1(return);
 }
