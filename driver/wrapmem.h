@@ -26,9 +26,9 @@
 //#define ALLOC_DEBUG 1
 //#endif
 
-enum alloc_type { ALLOC_TYPE_KMALLOC, ALLOC_TYPE_ATOMIC, ALLOC_TYPE_NON_ATOMIC,
-		  ALLOC_TYPE_VMALLOC, ALLOC_TYPE_SLACK, ALLOC_TYPE_PAGES,
-		  ALLOC_TYPE_MAX };
+enum alloc_type { ALLOC_TYPE_KMALLOC_ATOMIC, ALLOC_TYPE_KMALLOC_NON_ATOMIC,
+		  ALLOC_TYPE_VMALLOC_ATOMIC, ALLOC_TYPE_VMALLOC_NON_ATOMIC,
+		  ALLOC_TYPE_SLACK, ALLOC_TYPE_PAGES, ALLOC_TYPE_MAX };
 
 int wrapmem_init(void);
 void wrapmem_exit(void);
@@ -78,8 +78,10 @@ void *wrap_ExAllocatePoolWithTag(enum pool_type pool_type, SIZE_T size,
 #endif // _WRAPMEM_C_
 
 #else
-#define wrap_get_free_pages(flags, size)		\
+
+#define wrap_get_free_pages(flags, size)			\
 	(void *)__get_free_pages(flags, get_order(size))
+
 #endif // ALLOC_DEBUG
 
 #endif

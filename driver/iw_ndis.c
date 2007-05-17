@@ -54,7 +54,7 @@ int set_essid(struct wrap_ndis_device *wnd, const char *ssid, int ssid_len)
 		TRACE2("ssid = '%s'", buf);
 	}
 
-	res = miniport_set_info(wnd, OID_802_11_SSID, &req, sizeof(req));
+	res = miniport_set(wnd, OID_802_11_SSID, &req, sizeof(req));
 	if (res) {
 		WARNING("setting essid failed (%08X)", res);
 		EXIT2(return -EINVAL);
@@ -169,7 +169,7 @@ static int iw_get_essid(struct net_device *dev, struct iw_request_info *info,
 
 	ENTER2("");
 	memset(&req, 0, sizeof(req));
-	res = miniport_query_info(wnd, OID_802_11_SSID, &req, sizeof(req));
+	res = miniport_query(wnd, OID_802_11_SSID, &req, sizeof(req));
 	if (res) {
 		WARNING("getting essid failed (%08X)", res);
 		EXIT2(return -EOPNOTSUPP);
@@ -320,8 +320,7 @@ static int iw_get_freq(struct net_device *dev, struct iw_request_info *info,
 
 	ENTER2("");
 	memset(&req, 0, sizeof(req));
-	res = miniport_query_info(wnd, OID_802_11_CONFIGURATION,
-				  &req, sizeof(req));
+	res = miniport_query(wnd, OID_802_11_CONFIGURATION, &req, sizeof(req));
 	if (res) {
 		WARNING("getting configuration failed (%08X)", res);
 		EXIT2(return -EOPNOTSUPP);
@@ -358,8 +357,7 @@ static int iw_set_freq(struct net_device *dev, struct iw_request_info *info,
 	if (netif_carrier_ok(wnd->net_dev))
 		EXIT2(return 0);
 	memset(&req, 0, sizeof(req));
-	res = miniport_query_info(wnd, OID_802_11_CONFIGURATION,
-				  &req, sizeof(req));
+	res = miniport_query(wnd, OID_802_11_CONFIGURATION, &req, sizeof(req));
 	if (res) {
 		WARNING("getting configuration failed (%08X)", res);
 		EXIT2(return 0);
@@ -378,8 +376,7 @@ static int iw_set_freq(struct net_device *dev, struct iw_request_info *info,
 			req.ds_config *= 10;
 		req.ds_config /= 1000;
 	}
-	res = miniport_set_info(wnd, OID_802_11_CONFIGURATION,
-				&req, sizeof(req));
+	res = miniport_set(wnd, OID_802_11_CONFIGURATION, &req, sizeof(req));
 	if (res)
 		WARNING("setting configuration failed (%08X)", res);
 	return 0;
@@ -393,8 +390,8 @@ static int iw_get_tx_power(struct net_device *dev, struct iw_request_info *info,
 	NDIS_STATUS res;
 
 	ENTER2("");
-	res = miniport_query_info(wnd, OID_802_11_TX_POWER_LEVEL,
-				  &ndis_power, sizeof(ndis_power));
+	res = miniport_query(wnd, OID_802_11_TX_POWER_LEVEL,
+			     &ndis_power, sizeof(ndis_power));
 	if (res)
 		return -EOPNOTSUPP;
 	wrqu->txpower.flags = IW_TXPOW_MWATT;
@@ -414,8 +411,8 @@ static int iw_set_tx_power(struct net_device *dev, struct iw_request_info *info,
 	ENTER2("");
 	if (wrqu->txpower.disabled) {
 		ndis_power = 0;
-		res = miniport_set_info(wnd, OID_802_11_TX_POWER_LEVEL,
-					&ndis_power, sizeof(ndis_power));
+		res = miniport_set(wnd, OID_802_11_TX_POWER_LEVEL,
+				   &ndis_power, sizeof(ndis_power));
 		if (res)
 			return -EOPNOTSUPP;
 		res = disassociate(wnd, 1);
@@ -439,8 +436,8 @@ static int iw_set_tx_power(struct net_device *dev, struct iw_request_info *info,
 			}
 		}
 	}
-	res = miniport_set_info(wnd, OID_802_11_TX_POWER_LEVEL,
-				&ndis_power, sizeof(ndis_power));
+	res = miniport_set(wnd, OID_802_11_TX_POWER_LEVEL,
+			   &ndis_power, sizeof(ndis_power));
 	if (res)
 		return -EOPNOTSUPP;
 	return 0;
@@ -454,8 +451,8 @@ static int iw_get_bitrate(struct net_device *dev, struct iw_request_info *info,
 	int res;
 
 	ENTER2("");
-	res = miniport_query_info(wnd, OID_GEN_LINK_SPEED,
-				  &ndis_rate, sizeof(ndis_rate));
+	res = miniport_query(wnd, OID_GEN_LINK_SPEED,
+			     &ndis_rate, sizeof(ndis_rate));
 	if (res) {
 		WARNING("getting bitrate failed (%08X)", res);
 		ndis_rate = 0;
@@ -471,42 +468,29 @@ static int iw_set_bitrate(struct net_device *dev, struct iw_request_info *info,
 	struct wrap_ndis_device *wnd = netdev_priv(dev);
 	int i, n;
 	NDIS_STATUS res;
-	ndis_rates_ex rates_ex;
+	ndis_rates_ex rates;
 
 	ENTER2("");
 	if (wrqu->bitrate.fixed == 0)
 		EXIT2(return 0);
 
-	res = miniport_query_info(wnd, OID_802_11_SUPPORTED_RATES,
-				  &rates_ex, sizeof(ndis_rates_ex));
-	if (res) {
-		res = miniport_query_info(wnd, OID_802_11_SUPPORTED_RATES,
-					  &rates_ex, sizeof(ndis_rates));
-		n = NDIS_MAX_RATES;
-	} else
-		n = NDIS_MAX_RATES_EX;
-
+	res = miniport_query_info(wnd, OID_802_11_SUPPORTED_RATES, &rates,
+				  sizeof(rates), &n, NULL);
 	if (res) {
 		WARNING("getting bit rate failed (%08X)", res);
 		EXIT2(return 0);
 	}
-
-	for (i = 0 ; i < n ; i++) {
-		if (rates_ex[i] & 0x80)
+	for (i = 0; i < n; i++) {
+		if (rates[i] & 0x80)
 			continue;
-		if ((rates_ex[i] & 0x7f) * 500000 > wrqu->bitrate.value) {
+		if ((rates[i] & 0x7f) * 500000 > wrqu->bitrate.value) {
 			TRACE2("setting rate %d to 0",
-			       (rates_ex[i] & 0x7f) * 500000);
-			rates_ex[i] = 0;
+			       (rates[i] & 0x7f) * 500000);
+			rates[i] = 0;
 		}
 	}
 
-	if (n == NDIS_MAX_RATES_EX)
-		res = miniport_set_info(wnd, OID_802_11_DESIRED_RATES,
-					&rates_ex, sizeof(ndis_rates_ex));
-	else
-		res = miniport_set_info(wnd, OID_802_11_DESIRED_RATES,
-					&rates_ex, sizeof(ndis_rates));
+	res = miniport_set(wnd, OID_802_11_DESIRED_RATES, &rates, n);
 	if (res) {
 		WARNING("setting bit rate failed (%08X)", res);
 		EXIT2(return 0);
@@ -531,8 +515,8 @@ static int iw_get_rts_threshold(struct net_device *dev,
 	NDIS_STATUS res;
 
 	ENTER2("");
-	res = miniport_query_info(wnd, OID_802_11_RTS_THRESHOLD,
-				  &threshold, sizeof(threshold));
+	res = miniport_query(wnd, OID_802_11_RTS_THRESHOLD,
+			     &threshold, sizeof(threshold));
 	if (res)
 		return -EOPNOTSUPP;
 
@@ -550,8 +534,8 @@ static int iw_set_rts_threshold(struct net_device *dev,
 
 	ENTER2("");
 	threshold = wrqu->rts.value;
-	res = miniport_set_info(wnd, OID_802_11_RTS_THRESHOLD,
-				&threshold, sizeof(threshold));
+	res = miniport_set(wnd, OID_802_11_RTS_THRESHOLD,
+			   &threshold, sizeof(threshold));
 	if (res == NDIS_STATUS_INVALID_DATA)
 		return -EINVAL;
 	if (res)
@@ -569,8 +553,8 @@ static int iw_get_frag_threshold(struct net_device *dev,
 	NDIS_STATUS res;
 
 	ENTER2("");
-	res = miniport_query_info(wnd, OID_802_11_FRAGMENTATION_THRESHOLD,
-				  &frag_threshold, sizeof(frag_threshold));
+	res = miniport_query(wnd, OID_802_11_FRAGMENTATION_THRESHOLD,
+			     &frag_threshold, sizeof(frag_threshold));
 	if (res)
 		return -ENOTSUPP;
 
@@ -588,8 +572,8 @@ static int iw_set_frag_threshold(struct net_device *dev,
 
 	ENTER2("");
 	threshold = wrqu->frag.value;
-	res = miniport_set_info(wnd, OID_802_11_FRAGMENTATION_THRESHOLD,
-				&threshold, sizeof(threshold));
+	res = miniport_set(wnd, OID_802_11_FRAGMENTATION_THRESHOLD,
+			   &threshold, sizeof(threshold));
 	if (res == NDIS_STATUS_INVALID_DATA)
 		return -EINVAL;
 	if (res)
@@ -604,8 +588,7 @@ int get_ap_address(struct wrap_ndis_device *wnd, mac_address ap_addr)
 	res = NDIS_STATUS_ADAPTER_NOT_READY;
 	/* this OID is valid only when associated */
 	if (netif_carrier_ok(wnd->net_dev))
-		res = miniport_query_info(wnd, OID_802_11_BSSID, ap_addr,
-					  ETH_ALEN);
+		res = miniport_query(wnd, OID_802_11_BSSID, ap_addr, ETH_ALEN);
 	TRACE2(MACSTRSEP, MAC2STR(ap_addr));
 	if (res) {
 		TRACE2("res: %08X", res);
@@ -640,7 +623,7 @@ static int iw_set_ap_address(struct net_device *dev,
 	ENTER2("");
 	memcpy(ap_addr, wrqu->ap_addr.sa_data, ETH_ALEN);
 	TRACE2(MACSTRSEP, MAC2STR(ap_addr));
-	res = miniport_set_info(wnd, OID_802_11_BSSID, ap_addr, ETH_ALEN);
+	res = miniport_set(wnd, OID_802_11_BSSID, ap_addr, ETH_ALEN);
 	/* user apps may set ap's mac address, which is not required;
 	 * they may fail to work if this function fails, so return
 	 * success */
@@ -811,8 +794,8 @@ int add_wep_key(struct wrap_ndis_device *wnd, char *key, int key_len,
 			WARNING("encryption couldn't be enabled (%08X)", res);
 	}
 	TRACE2("key %d: " MACSTRSEP, index, MAC2STR(key));
-	res = miniport_set_info(wnd, OID_802_11_ADD_WEP, &ndis_key,
-				sizeof(ndis_key));
+	res = miniport_set(wnd, OID_802_11_ADD_WEP, &ndis_key,
+			   sizeof(ndis_key));
 	if (res) {
 		WARNING("adding encryption key %d failed (%08X)",
 			index+1, res);
@@ -852,8 +835,8 @@ static int remove_key(struct wrap_ndis_device *wnd, int index,
 		} else
 			memset(remove_key.bssid, 0xff,
 			       sizeof(remove_key.bssid));
-		if (miniport_set_info(wnd, OID_802_11_REMOVE_KEY,
-				      (char *)&remove_key, sizeof(remove_key)))
+		if (miniport_set(wnd, OID_802_11_REMOVE_KEY,
+				 &remove_key, sizeof(remove_key)))
 			EXIT2(return -EINVAL);
 	} else {
 		ndis_key_index keyindex = index;
@@ -1172,7 +1155,7 @@ int set_scan(struct wrap_ndis_device *wnd)
 	NDIS_STATUS res;
 
 	ENTER2("");
-	res = miniport_set_info(wnd, OID_802_11_BSSID_LIST_SCAN, NULL, 0);
+	res = miniport_set(wnd, OID_802_11_BSSID_LIST_SCAN, NULL, 0);
 	if (res) {
 		WARNING("scanning failed (%08X)", res);
 		EXIT2(return -EOPNOTSUPP);
@@ -1213,8 +1196,8 @@ static int iw_get_scan(struct net_device *dev, struct iw_request_info *info,
 	memset(bssid_list, 0, list_len);
 
 	needed = 0;
-	res = miniport_query_info_needed(wnd, OID_802_11_BSSID_LIST,
-					 bssid_list, list_len, &needed);
+	res = miniport_query_info(wnd, OID_802_11_BSSID_LIST,
+				  bssid_list, list_len, NULL, &needed);
 	if (res == NDIS_STATUS_INVALID_LENGTH ||
 	    res == NDIS_STATUS_BUFFER_TOO_SHORT) {
 		/* now try with required space */
@@ -1227,8 +1210,8 @@ static int iw_get_scan(struct net_device *dev, struct iw_request_info *info,
 		}
 		memset(bssid_list, 0, list_len);
 
-		res = miniport_query_info(wnd, OID_802_11_BSSID_LIST,
-					  bssid_list, list_len);
+		res = miniport_query(wnd, OID_802_11_BSSID_LIST,
+				     bssid_list, list_len);
 	}
 	if (res) {
 		WARNING("getting BSSID list failed (%08X)", res);
@@ -1265,8 +1248,8 @@ static int iw_set_power_mode(struct net_device *dev,
 	else // if (wrqu->power.flags & IW_POWER_MAX)
 		power_mode = NDIS_POWER_MAX;
 
-	res = miniport_set_info(wnd, OID_802_11_POWER_MODE,
-				&power_mode, sizeof(power_mode));
+	res = miniport_set(wnd, OID_802_11_POWER_MODE,
+			   &power_mode, sizeof(power_mode));
 	if (res)
 		WARNING("setting power mode failed (%08X)", res);
 	return 0;
@@ -1281,8 +1264,8 @@ static int iw_get_power_mode(struct net_device *dev,
 	ULONG power_mode;
 
 	ENTER2("");
-	res = miniport_query_info(wnd, OID_802_11_POWER_MODE,
-				  &power_mode, sizeof(power_mode));
+	res = miniport_query(wnd, OID_802_11_POWER_MODE,
+			     &power_mode, sizeof(power_mode));
 	if (res)
 		return -ENOTSUPP;
 
@@ -1313,8 +1296,8 @@ static int iw_get_sensitivity(struct net_device *dev,
 	ndis_rssi rssi_trigger;
 
 	ENTER2("");
-	res = miniport_query_info(wnd, OID_802_11_RSSI_TRIGGER,
-				  &rssi_trigger, sizeof(rssi_trigger));
+	res = miniport_query(wnd, OID_802_11_RSSI_TRIGGER,
+			     &rssi_trigger, sizeof(rssi_trigger));
 	if (res)
 		return -EOPNOTSUPP;
 	wrqu->param.value = rssi_trigger;
@@ -1336,8 +1319,8 @@ static int iw_set_sensitivity(struct net_device *dev,
 		rssi_trigger = 0;
 	else
 		rssi_trigger = wrqu->param.value;
-	res = miniport_set_info(wnd, OID_802_11_RSSI_TRIGGER,
-				&rssi_trigger, sizeof(rssi_trigger));
+	res = miniport_set(wnd, OID_802_11_RSSI_TRIGGER,
+			   &rssi_trigger, sizeof(rssi_trigger));
 	if (res == NDIS_STATUS_INVALID_DATA)
 		return -EINVAL;
 	if (res)
@@ -1363,7 +1346,7 @@ static int iw_get_range(struct net_device *dev, struct iw_request_info *info,
 	struct wrap_ndis_device *wnd = netdev_priv(dev);
 	unsigned int i, n;
 	NDIS_STATUS res;
-	ndis_rates_ex rates_ex;
+	ndis_rates_ex rates;
 	ndis_tx_power_level tx_power;
 
 	ENTER2("");
@@ -1373,8 +1356,8 @@ static int iw_get_range(struct net_device *dev, struct iw_request_info *info,
 	range->txpower_capa = IW_TXPOW_MWATT;
 	range->num_txpower = 0;
 
-	res = miniport_query_info(wnd, OID_802_11_TX_POWER_LEVEL,
-				 &tx_power, sizeof(tx_power));
+	res = miniport_query(wnd, OID_802_11_TX_POWER_LEVEL,
+			     &tx_power, sizeof(tx_power));
 	if (!res) {
 		range->num_txpower = 1;
 		range->txpower[0] = tx_power;
@@ -1401,23 +1384,18 @@ static int iw_get_range(struct net_device *dev, struct iw_request_info *info,
 	range->encoding_size[1] = 13;
 
 	range->num_bitrates = 0;
-	n = NDIS_MAX_RATES_EX;
+	memset(&rates, 0, sizeof(rates));
 	res = miniport_query_info(wnd, OID_802_11_SUPPORTED_RATES,
-				  &rates_ex, sizeof(ndis_rates_ex));
-	if (res) {
-		res = miniport_query_info(wnd, OID_802_11_SUPPORTED_RATES,
-					  &rates_ex, sizeof(ndis_rates));
-		n = NDIS_MAX_RATES;
-	}
+				  &rates, sizeof(rates), &n, NULL);
 	if (res)
 		WARNING("getting bit rates failed: %08X", res);
 	else {
 		for (i = 0; i < n && range->num_bitrates < IW_MAX_BITRATES; i++)
-			if (rates_ex[i] & 0x80)
+			if (rates[i] & 0x80)
 				continue;
-			else if (rates_ex[i] & 0x7f) {
+			else if (rates[i] & 0x7f) {
 				range->bitrate[range->num_bitrates] =
-					(rates_ex[i] & 0x7f) * 500000;
+					(rates[i] & 0x7f) * 500000;
 				range->num_bitrates++;
 			}
 	}
@@ -1477,7 +1455,7 @@ NDIS_STATUS disassociate(struct wrap_ndis_device *wnd, int reset_ssid)
 	int i;
 
 	TRACE2("");
-	res = miniport_set_info(wnd, OID_802_11_DISASSOCIATE, NULL, 0);
+	res = miniport_set(wnd, OID_802_11_DISASSOCIATE, NULL, 0);
 	/* disassociate causes radio to be turned off; if reset_ssid
 	 * is given, set ssid to random to enable radio */
 	if (reset_ssid) {
@@ -1708,8 +1686,8 @@ static int iw_set_encodeext(struct net_device *dev,
 	} else
 		memcpy(ndis_key.key, key, ext.key_len);
 
-	res = miniport_set_info(wnd, OID_802_11_ADD_KEY,
-				&ndis_key, ndis_key.struct_size);
+	res = miniport_set(wnd, OID_802_11_ADD_KEY,
+			   &ndis_key, ndis_key.struct_size);
 	if (res) {
 		TRACE2("adding key failed (%08X), %u",
 		       res, ndis_key.struct_size);
@@ -1762,7 +1740,7 @@ static int iw_set_pmksa(struct net_device *dev, struct iw_request_info *info,
 	pmkid.length = 8 + pmkid.bssid_info_count *
 		sizeof(struct ndis_bssid_info);
 
-	res = miniport_set_info(wnd, OID_802_11_PMKID, &pmkid, sizeof(pmkid));
+	res = miniport_set(wnd, OID_802_11_PMKID, &pmkid, sizeof(pmkid));
 	if (res == NDIS_STATUS_FAILURE)
 		return -EOPNOTSUPP;
 	TRACE2("OID_802_11_PMKID -> %d", res);
@@ -1868,7 +1846,7 @@ static int priv_power_profile(struct net_device *dev,
 	else
 		profile_inf = NdisPowerProfileBattery;
 
-	LIN2WIN4(miniport->pnp_event_notify, wnd->nmb->adapter_ctx,
+	LIN2WIN4(miniport->pnp_event_notify, wnd->nmb->mp_ctx,
 		 NdisDevicePnPEventPowerProfileChanged,
 		 &profile_inf, sizeof(profile_inf));
 	EXIT2(return 0);
@@ -2113,8 +2091,8 @@ static int wpa_set_key(struct net_device *dev, struct iw_request_info *info,
 		       wpa_key.key_len);
 		TRACE2("key %d removed", wpa_key.key_index);
 	} else {
-		res = miniport_set_info(wnd, OID_802_11_ADD_KEY,
-					&ndis_key, ndis_key.struct_size);
+		res = miniport_set(wnd, OID_802_11_ADD_KEY,
+				   &ndis_key, ndis_key.struct_size);
 		if (res) {
 			TRACE2("adding key failed (%08X), %u",
 			       res, ndis_key.struct_size);

@@ -16,6 +16,11 @@
 #ifndef _NTOSKERNEL_H_
 #define _NTOSKERNEL_H_
 
+#ifndef CONFIG_WIRELESS_EXT
+#warning "wirelss devices are not supported by this kernel "\
+	"as CONFIG_WIRELESS_EXT is not enabled"
+#endif
+
 #include <linux/types.h>
 #include <linux/timer.h>
 #include <linux/time.h>
@@ -109,6 +114,13 @@
 
 #endif // LINUX_VERSION_CODE
 
+#define prepare_wait_condition(task, var, value)	\
+do {							\
+	var = value;					\
+	task = current;					\
+	mb();						\
+} while (0)
+
 /* Wait in wait_state (e.g., TASK_INTERRUPTIBLE) for condition to
  * become true; timeout is either jiffies (> 0) to wait or 0 to wait
  * forever.
@@ -195,7 +207,7 @@ typedef void *worker_param_t;
 typedef struct workqueue_struct workqueue_struct_t;
 typedef struct work_struct work_struct_t;
 
-#ifdef INIT_WORK_NAR
+#if defined(INIT_WORK_NAR) || defined(INIT_DELAYED_WORK_DEFERRABLE)
 #define initialize_work(work, func, data) INIT_WORK(work, func)
 typedef struct work_struct *worker_param_t;
 #define worker_param_data(param, type, member)	\
@@ -242,58 +254,7 @@ struct nt_thread *wrap_worker_init(workqueue_struct_t *wq);
 #define CHECKSUM_HW CHECKSUM_PARTIAL
 #endif
 
-#define atomic_unary_op(var, size, oper)				\
-do {									\
-	if (size == 1)							\
-		__asm__ __volatile__(					\
-			LOCK_PREFIX oper "b %b0\n\t" : "+m" (var));	\
-	else if (size == 2)						\
-		__asm__ __volatile__(					\
-			LOCK_PREFIX oper "w %w0\n\t" : "+m" (var));	\
-	else if (size == 4)						\
-		__asm__ __volatile__(					\
-			LOCK_PREFIX oper "l %0\n\t" : "+m" (var));	\
-	else if (size == 8)						\
-		__asm__ __volatile__(					\
-			LOCK_PREFIX oper "q %q0\n\t" : "+m" (var));	\
-	else {								\
-		extern void _invalid_op_size_(void);			\
-		_invalid_op_size_();					\
-	}								\
-} while (0)
-
-#define atomic_inc_var_size(var, size) atomic_unary_op(var, size, "inc")
-
-#define atomic_inc_var(var) atomic_inc_var_size(var, sizeof(var))
-
-#define atomic_dec_var_size(var, size) atomic_unary_op(var, size, "dec")
-
-#define atomic_dec_var(var) atomic_dec_var_size(var, sizeof(var))
-
-#define pre_atomic_add(var, i)					\
-({								\
-	typeof(var) pre;					\
-	__asm__ __volatile__(					\
-		LOCK_PREFIX "xadd %0, %1\n\t"			\
-		: "=r"(pre), "+m"(var)				\
-		: "0"(i));					\
-	pre;							\
-})
-
-#define post_atomic_add(var, i) (pre_atomic_add(var, i) + i)
-
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
-
-#if !defined(CONFIG_PREEMPT) && !defined(preempt_enable)
-extern volatile int preempt_count;
-#define preempt_enable()  do { atomic_inc_var(preempt_count); } while (0)
-#define preempt_disable()  do { atomic_dec_var(preempt_count); } while (0)
-#define in_atomic() preempt_count
-#endif
-
-#ifndef preempt_enable_no_resched
-#define preempt_enable_no_resched() preempt_enable()
-#endif
 
 #ifndef container_of
 #define container_of(ptr, type, member)					\
@@ -339,7 +300,14 @@ typedef u32 pm_message_t;
 
 #ifndef PCI_D0
 #define PCI_D0 0
+#endif
+
+#ifndef PCI_D3hot
 #define PCI_D3hot 3
+#endif
+
+#ifndef PCI_D3cold
+#define PCI_D3cold 3
 #endif
 
 #ifndef PM_EVENT_SUSPEND
@@ -385,25 +353,23 @@ typedef u32 pm_message_t;
 #define set_thread_priority(thread, prio) set_user_nice(thread, prio)
 #endif
 
+#ifndef DMA_24BIT_MASK
+#define DMA_24BIT_MASK 0x0000000000ffffffULL
+#endif
+
+#ifndef DMA_30BIT_MASK
+#define DMA_30BIT_MASK 0x000000003fffffffULL
+#endif
+
 #include "ndiswrapper.h"
 #include "pe_linker.h"
 #include "wrapmem.h"
 #include "lin2win.h"
 #include "loader.h"
 
-#ifdef CONFIG_X86_64
-#define get_sp(sp) __asm__ __volatile__("mov %%rsp, %0\n\t" : "=m"(sp))
-#else
-#define get_sp(sp) __asm__ __volatile__("mov %%esp, %0\n\t" : "=m"(sp))
+#ifdef DEBUG
+#define DEBUG_IRQL 1
 #endif
-
-#define print_sp() do {				\
-		void *sp;			\
-		get_sp(sp);			\
-		TRACE1("sp: %p", sp);		\
-	} while (0)
-
-//#define DEBUG_IRQL 1
 
 #if !defined(CONFIG_USB) && defined(CONFIG_USB_MODULE)
 #define CONFIG_USB 1
@@ -449,12 +415,12 @@ struct wrap_export {
 
 #ifdef CONFIG_X86_64
 
-#define WIN_SYMBOL(name, argc)					\
+#define WIN_SYMBOL(name, argc)						\
 	{#name, (generic_func) win2lin_ ## name ## _ ## argc}
 #define WIN_WIN_SYMBOL(name, argc)					\
 	{#name, (generic_func) win2lin__win_ ## name ## _ ## argc}
 #define WIN_FUNC_DECL(name, argc)			\
-	typeof(name) win2lin_ ## name ## _ ## argc ;
+	typeof(name) win2lin_ ## name ## _ ## argc;
 #define WIN_FUNC_PTR(name, argc) win2lin_ ## name ## _ ## argc
 
 #else
@@ -558,6 +524,7 @@ struct wrap_device {
 	union {
 		struct {
 			struct pci_dev *pdev;
+			enum device_power_state wake_state;
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,9)
 			u32 pci_state[16];
 #endif
@@ -606,215 +573,96 @@ extern workqueue_struct_t *ntos_wq;
 #define schedule_ntos_work(work_struct) schedule_work(work_struct)
 #endif
 
-int ntoskernel_init(void);
-void ntoskernel_exit(void);
-int ntoskernel_init_device(struct wrap_device *wd);
-void ntoskernel_exit_device(struct wrap_device *wd);
-void *allocate_object(ULONG size, enum common_object_type type,
-		      struct unicode_string *name);
-void free_object(void *object);
+#define atomic_unary_op(var, size, oper)				\
+do {									\
+	if (size == 1)							\
+		__asm__ __volatile__(					\
+			LOCK_PREFIX oper "b %b0\n\t" : "+m" (var));	\
+	else if (size == 2)						\
+		__asm__ __volatile__(					\
+			LOCK_PREFIX oper "w %w0\n\t" : "+m" (var));	\
+	else if (size == 4)						\
+		__asm__ __volatile__(					\
+			LOCK_PREFIX oper "l %0\n\t" : "+m" (var));	\
+	else if (size == 8)						\
+		__asm__ __volatile__(					\
+			LOCK_PREFIX oper "q %q0\n\t" : "+m" (var));	\
+	else {								\
+		extern void _invalid_op_size_(void);			\
+		_invalid_op_size_();					\
+	}								\
+} while (0)
 
-int usb_init(void);
-void usb_exit(void);
-int usb_init_device(struct wrap_device *wd);
-void usb_exit_device(struct wrap_device *wd);
-void usb_cancel_pending_urbs(void);
+#define atomic_inc_var_size(var, size) atomic_unary_op(var, size, "inc")
 
-int crt_init(void);
-void crt_exit(void);
-int rtl_init(void);
-void rtl_exit(void);
-int wrap_procfs_init(void);
-void wrap_procfs_remove(void);
+#define atomic_inc_var(var) atomic_inc_var_size(var, sizeof(var))
 
-int link_pe_images(struct pe_image *pe_image, unsigned short n);
+#define atomic_dec_var_size(var, size) atomic_unary_op(var, size, "dec")
 
-int stricmp(const char *s1, const char *s2);
-void dump_bytes(const char *name, const u8 *from, int len);
-struct mdl *allocate_init_mdl(void *virt, ULONG length);
-void free_mdl(struct mdl *mdl);
-struct driver_object *find_bus_driver(const char *name);
-void free_custom_extensions(struct driver_extension *drv_obj_ext);
-struct nt_thread *get_current_nt_thread(void);
-u64 ticks_1601(void);
-int schedule_ntos_work_item(NTOS_WORK_FUNC func, void *arg1, void *arg2);
-void wrap_init_timer(struct nt_timer *nt_timer, enum timer_type type,
-		     struct kdpc *kdpc, struct ndis_miniport_block *nmb);
-BOOLEAN wrap_set_timer(struct nt_timer *nt_timer, unsigned long expires_hz,
-		       unsigned long repeat_hz, struct kdpc *kdpc);
+#define atomic_dec_var(var) atomic_dec_var_size(var, sizeof(var))
 
-LONG InterlockedDecrement(LONG volatile *val) wfastcall;
-LONG InterlockedIncrement(LONG volatile *val) wfastcall;
-struct nt_list *ExInterlockedInsertHeadList
-	(struct nt_list *head, struct nt_list *entry,
-	 NT_SPIN_LOCK *lock) wfastcall;
-struct nt_list *ExInterlockedInsertTailList
-	(struct nt_list *head, struct nt_list *entry,
-	 NT_SPIN_LOCK *lock) wfastcall;
-struct nt_list *ExInterlockedRemoveHeadList
-	(struct nt_list *head, NT_SPIN_LOCK *lock) wfastcall;
-NTSTATUS IofCallDriver(struct device_object *dev_obj, struct irp *irp) wfastcall;
-KIRQL KfRaiseIrql(KIRQL newirql) wfastcall;
-void KfLowerIrql(KIRQL oldirql) wfastcall;
-KIRQL KfAcquireSpinLock(NT_SPIN_LOCK *lock) wfastcall;
-void KfReleaseSpinLock(NT_SPIN_LOCK *lock, KIRQL oldirql) wfastcall;
-void IofCompleteRequest(struct irp *irp, CHAR prio_boost) wfastcall;
-void KefReleaseSpinLockFromDpcLevel(NT_SPIN_LOCK *lock) wfastcall;
+#define pre_atomic_add(var, i)					\
+({								\
+	typeof(var) pre;					\
+	__asm__ __volatile__(					\
+		LOCK_PREFIX "xadd %0, %1\n\t"			\
+		: "=r"(pre), "+m"(var)				\
+		: "0"(i));					\
+	pre;							\
+})
 
-LONG ObfReferenceObject(void *object) wfastcall;
-void ObfDereferenceObject(void *object) wfastcall;
+#define post_atomic_add(var, i) (pre_atomic_add(var, i) + i)
 
-#define ObReferenceObject(object) ObfReferenceObject(object)
-#define ObDereferenceObject(object) ObfDereferenceObject(object)
-
-void WRITE_PORT_UCHAR(ULONG_PTR port, UCHAR value) wstdcall;
-UCHAR READ_PORT_UCHAR(ULONG_PTR port) wstdcall;
-
-#undef ExAllocatePoolWithTag
-void *ExAllocatePoolWithTag(enum pool_type pool_type, SIZE_T size,
-			    ULONG tag) wstdcall;
-#if defined(ALLOC_DEBUG) && ALLOC_DEBUG > 1
-#define ExAllocatePoolWithTag(pool_type, size, tag)			\
-	wrap_ExAllocatePoolWithTag(pool_type, size, tag, __FILE__, __LINE__)
+#ifndef in_atomic
+#define in_atomic() in_interrupt()
 #endif
 
-void ExFreePool(void *p) wstdcall;
-ULONG MmSizeOfMdl(void *base, ULONG length) wstdcall;
-void *MmMapIoSpace(PHYSICAL_ADDRESS phys_addr, SIZE_T size,
-		   enum memory_caching_type cache) wstdcall;
-void MmUnmapIoSpace(void *addr, SIZE_T size) wstdcall;
-void MmProbeAndLockPages(struct mdl *mdl, KPROCESSOR_MODE access_mode,
-			 enum lock_operation operation) wstdcall;
-void MmUnlockPages(struct mdl *mdl) wstdcall;
-void KeInitializeEvent(struct nt_event *nt_event,
-		       enum event_type type, BOOLEAN state) wstdcall;
-LONG KeSetEvent(struct nt_event *nt_event, KPRIORITY incr,
-		BOOLEAN wait) wstdcall;
-LONG KeResetEvent(struct nt_event *nt_event) wstdcall;
-void KeClearEvent(struct nt_event *nt_event) wstdcall;
-void KeInitializeDpc(struct kdpc *kdpc, void *func, void *ctx) wstdcall;
-BOOLEAN queue_kdpc(struct kdpc *kdpc);
-BOOLEAN dequeue_kdpc(struct kdpc *kdpc);
+/* if either PREEMPT is not available or PREEMPT_RT is used, we fake
+ * preempt so that the driver gets IRQL as required. When PREEMPT is
+ * not available, kernel won't preempt; when CONFIG_PREEMPT_RT is
+ * used, if driver raises IRQL to DISPATCH_LEVEL, kernel is free to
+ * preempt, but due to RT, we will get our turn quickly and hopefully
+ * driver doesn't mind the short delay */
 
-void KeFlushQueuedDpcs(void) wstdcall;
-NTSTATUS KeWaitForSingleObject(void *object, KWAIT_REASON reason,
-			       KPROCESSOR_MODE waitmode, BOOLEAN alertable,
-			       LARGE_INTEGER *timeout) wstdcall;
-struct mdl *IoAllocateMdl(void *virt, ULONG length, BOOLEAN second_buf,
-			  BOOLEAN charge_quota, struct irp *irp) wstdcall;
-void MmBuildMdlForNonPagedPool(struct mdl *mdl) wstdcall;
-void IoFreeMdl(struct mdl *mdl) wstdcall;
-NTSTATUS IoCreateDevice(struct driver_object *driver, ULONG dev_ext_length,
-			struct unicode_string *dev_name, DEVICE_TYPE dev_type,
-			ULONG dev_chars, BOOLEAN exclusive,
-			struct device_object **dev_obj) wstdcall;
-NTSTATUS IoCreateSymbolicLink(struct unicode_string *link,
-			      struct unicode_string *dev_name) wstdcall;
-void IoDeleteDevice(struct device_object *dev) wstdcall;
-void IoDetachDevice(struct device_object *topdev) wstdcall;
-struct device_object *IoGetAttachedDevice(struct device_object *dev) wstdcall;
-struct device_object *IoGetAttachedDeviceReference
-	(struct device_object *dev) wstdcall;
-NTSTATUS IoAllocateDriverObjectExtension
-	(struct driver_object *drv_obj, void *client_id, ULONG extlen,
-	 void **ext) wstdcall;
-void *IoGetDriverObjectExtension(struct driver_object *drv,
-				 void *client_id) wstdcall;
-struct device_object *IoAttachDeviceToDeviceStack
-	(struct device_object *src, struct device_object *dst) wstdcall;
-void KeInitializeEvent(struct nt_event *nt_event, enum event_type type,
-		       BOOLEAN state) wstdcall;
-struct irp *IoAllocateIrp(char stack_count, BOOLEAN charge_quota) wstdcall;
-void IoFreeIrp(struct irp *irp) wstdcall;
-BOOLEAN IoCancelIrp(struct irp *irp) wstdcall;
-struct irp *IoBuildSynchronousFsdRequest
-	(ULONG major_func, struct device_object *dev_obj, void *buf,
-	 ULONG length, LARGE_INTEGER *offset, struct nt_event *event,
-	 struct io_status_block *status) wstdcall;
-struct irp *IoBuildAsynchronousFsdRequest
-	(ULONG major_func, struct device_object *dev_obj, void *buf,
-	 ULONG length, LARGE_INTEGER *offset,
-	 struct io_status_block *status) wstdcall;
-NTSTATUS PoCallDriver(struct device_object *dev_obj, struct irp *irp) wstdcall;
+#if defined(CONFIG_PREEMPT_RT) || !defined(inc_preempt_count)
+#define WARP_PREEMPT 1
+#endif
 
-NTSTATUS IoPassIrpDown(struct device_object *dev_obj, struct irp *irp) wstdcall;
-WIN_FUNC_DECL(IoPassIrpDown,2)
-NTSTATUS IoSyncForwardIrp(struct device_object *dev_obj,
-			  struct irp *irp) wstdcall;
-NTSTATUS IoAsyncForwardIrp(struct device_object *dev_obj,
-			   struct irp *irp) wstdcall;
-NTSTATUS IoInvalidDeviceRequest(struct device_object *dev_obj,
-				struct irp *irp) wstdcall;
+#ifdef WARP_PREEMPT
+extern volatile int warp_preempt_count;
+#define warp_preempt_disable() atomic_inc_var(warp_preempt_count)
+#define warp_preempt_enable() atomic_dec_var(warp_preempt_count)
+#define warp_preempt_enable_no_resched() warp_preempt_enable()
 
-KIRQL KeGetCurrentIrql(void) wstdcall;
-void KeInitializeSpinLock(NT_SPIN_LOCK *lock) wstdcall;
-void KeAcquireSpinLock(NT_SPIN_LOCK *lock, KIRQL *irql) wstdcall;
-void KeReleaseSpinLock(NT_SPIN_LOCK *lock, KIRQL oldirql) wstdcall;
-KIRQL KeAcquireSpinLockRaiseToDpc(NT_SPIN_LOCK *lock) wstdcall;
+#elif defined(CONFIG_PREEMPT)
 
-void IoAcquireCancelSpinLock(KIRQL *irql) wstdcall;
-void IoReleaseCancelSpinLock(KIRQL irql) wstdcall;
+#ifndef preempt_enable_no_resched
+#define preempt_enable_no_resched() preempt_enable()
+#endif
 
-void RtlCopyMemory(void *dst, const void *src, SIZE_T length) wstdcall;
-NTSTATUS RtlUnicodeStringToAnsiString
-	(struct ansi_string *dst, const struct unicode_string *src,
-	 BOOLEAN dup) wstdcall;
-NTSTATUS RtlAnsiStringToUnicodeString
-	(struct unicode_string *dst, const struct ansi_string *src,
-	 BOOLEAN dup) wstdcall;
-void RtlInitAnsiString(struct ansi_string *dst, const char *src) wstdcall;
-void RtlInitString(struct ansi_string *dst, const char *src) wstdcall;
-void RtlInitUnicodeString(struct unicode_string *dest,
-			  const wchar_t *src) wstdcall;
-void RtlFreeUnicodeString(struct unicode_string *string) wstdcall;
-void RtlFreeAnsiString(struct ansi_string *string) wstdcall;
-LONG RtlCompareUnicodeString(const struct unicode_string *s1,
-			     const struct unicode_string *s2,
-			     BOOLEAN case_insensitive) wstdcall;
-void RtlCopyUnicodeString(struct unicode_string *dst,
-			  struct unicode_string *src) wstdcall;
-void KeInitializeTimer(struct nt_timer *nt_timer) wstdcall;
-void KeInitializeTimerEx(struct nt_timer *nt_timer,
-			 enum timer_type type) wstdcall;
-BOOLEAN KeSetTimerEx(struct nt_timer *nt_timer, LARGE_INTEGER duetime_ticks,
-		     LONG period_ms, struct kdpc *kdpc) wstdcall;
-BOOLEAN KeSetTimer(struct nt_timer *nt_timer, LARGE_INTEGER duetime_ticks,
-		   struct kdpc *kdpc) wstdcall;
-BOOLEAN KeCancelTimer(struct nt_timer *nt_timer) wstdcall;
-void KeInitializeDpc(struct kdpc *kdpc, void *func, void *ctx) wstdcall;
-struct nt_thread *KeGetCurrentThread(void) wstdcall;
-NTSTATUS ObReferenceObjectByHandle(void *handle, ACCESS_MASK desired_access,
-				   void *obj_type, KPROCESSOR_MODE access_mode,
-				   void **object, void *handle_info) wstdcall;
+#define warp_preempt_disable() preempt_disable()
+#define warp_preempt_enable() preempt_enable()
+#define warp_preempt_enable_no_resched() preempt_enable_no_resched()
+#define warp_preempt_count 0
 
-void adjust_user_shared_data_addr(char *driver, unsigned long length);
-
-#define IoCompleteRequest(irp, prio) IofCompleteRequest(irp, prio)
-#define IoCallDriver(dev, irp) IofCallDriver(dev, irp)
-
-#if defined(IO_DEBUG)
-#define DUMP_IRP(irp)							\
-do {									\
-	struct io_stack_location *irp_sl;				\
-	irp_sl = IoGetCurrentIrpStackLocation(irp);			\
-	IOTRACE("irp: %p, stack size: %d, cl: %d, sl: %p, dev_obj: %p, " \
-		"mj_fn: %d, minor_fn: %d, nt_urb: %p, event: %p",	\
-		irp, irp->stack_count, (irp)->current_location,		\
-		irp_sl, irp_sl->dev_obj, irp_sl->major_fn,		\
-		irp_sl->minor_fn, IRP_URB(irp),				\
-		(irp)->user_event);					\
-} while (0)
 #else
-#define DUMP_IRP(irp) do { } while (0)
+
+#define warp_preempt_disable() inc_preempt_count()
+#define warp_preempt_enable() dec_preempt_count()
+#define warp_preempt_enable_no_resched() warp_preempt_enable()
+#define warp_preempt_count 0
+
 #endif
 
 static inline KIRQL current_irql(void)
 {
+#ifdef DEBUG_IRQL
 	if (in_irq() || irqs_disabled())
-		EXIT6(return DIRQL);
+		EXIT2(return DIRQL);
 	if (in_interrupt())
-		EXIT6(return SOFT_IRQL);
-	if (in_atomic())
+		EXIT2(return SOFT_IRQL);
+#endif
+	if (warp_preempt_count || in_atomic())
 		EXIT6(return DISPATCH_LEVEL);
 	else
 		EXIT6(return PASSIVE_LEVEL);
@@ -824,25 +672,30 @@ static inline KIRQL raise_irql(KIRQL newirql)
 {
 	KIRQL irql = current_irql();
 	TRACE6("%d, %d", irql, newirql);
-	assert(newirql <= DISPATCH_LEVEL);
-	assert(irql <= newirql);
-	if (irql < DISPATCH_LEVEL && newirql == DISPATCH_LEVEL)
-		preempt_disable();
-
+#ifdef DEBUG_IRQL
+	if (newirql > DISPATCH_LEVEL || irql > newirql) {
+		WARNING("invalid irql: %d, %d", irql, newirql);
+		dump_stack();
+	}
+#endif
+	warp_preempt_disable();
 	return irql;
 }
 
 static inline void lower_irql(KIRQL oldirql)
 {
+#ifdef DEBUG_IRQL
 	KIRQL irql = current_irql();
 	TRACE6("%d, %d", irql, oldirql);
-	assert(irql <= DISPATCH_LEVEL);
-	assert(oldirql <= irql);
-	if (oldirql < DISPATCH_LEVEL && irql == DISPATCH_LEVEL)
-		preempt_enable();
+	if (irql > DISPATCH_LEVEL || oldirql > irql) {
+		WARNING("invalid irql: %d, %d", irql, oldirql);
+		dump_stack();
+	}
+#endif
+	warp_preempt_enable();
 }
 
-#define gfp_irql() (current_irql() < DISPATCH_LEVEL ? GFP_KERNEL : GFP_ATOMIC)
+#define irql_gfp() (in_atomic() ? GFP_ATOMIC : GFP_KERNEL)
 
 /* Windows spinlocks are of type ULONG_PTR which is not big enough to
  * store Linux spinlocks; so we implement Windows spinlocks using
@@ -892,6 +745,30 @@ static inline void nt_spin_unlock(NT_SPIN_LOCK *lock)
 
 #endif // CONFIG_SMP
 
+/* When kernel would've disabled preempt (e.g., in interrupt
+ * handlers), we need to fake preempt so driver thinks it is running
+ * at right IRQL */
+
+#ifdef WARP_PREEMPT
+#define nt_spin_lock_warp_preempt(lock)		\
+do {						\
+	warp_preempt_disable();			\
+	nt_spin_lock(lock);			\
+} while (0)
+
+#define nt_spin_unlock_warp_preempt(lock)	\
+do {						\
+	nt_spin_unlock(lock);			\
+	warp_preempt_enable();			\
+} while (0)
+
+#else
+
+#define nt_spin_lock_warp_preempt(lock) nt_spin_lock(lock)
+#define nt_spin_unlock_warp_preempt(lock) nt_spin_unlock(lock)
+
+#endif
+
 /* raise IRQL to given (higher) IRQL if necessary before locking */
 static inline KIRQL nt_spin_lock_irql(NT_SPIN_LOCK *lock, KIRQL newirql)
 {
@@ -910,14 +787,14 @@ static inline void nt_spin_unlock_irql(NT_SPIN_LOCK *lock, KIRQL oldirql)
 static inline void nt_spin_lock_bh(NT_SPIN_LOCK *lock)
 {
 	local_bh_disable();
-	preempt_disable();
+	warp_preempt_disable();
 	nt_spin_lock(lock);
 }
 
 static inline void nt_spin_unlock_bh(NT_SPIN_LOCK *lock)
 {
 	nt_spin_unlock(lock);
-	preempt_enable_no_resched();
+	warp_preempt_enable_no_resched();
 	local_bh_enable();
 }
 
@@ -932,7 +809,7 @@ static inline void nt_spin_unlock_bh(NT_SPIN_LOCK *lock)
 #define nt_spin_lock_irqsave(lock, flags)				\
 do {									\
 	save_local_irq(flags);						\
-	preempt_disable();						\
+	warp_preempt_disable();						\
 	nt_spin_lock(lock);						\
 } while (0)
 
@@ -940,13 +817,13 @@ do {									\
 do {									\
 	nt_spin_unlock(lock);						\
 	restore_local_irq(flags);					\
-	preempt_enable();						\
+	warp_preempt_enable();						\
 } while (0)
 
-#define atomic_insert_list_head(oldhead, head, newhead)			\
-	do {								\
-		oldhead = (typeof(oldhead))head;			\
-	} while (cmpxchg(&(head), oldhead, newhead) != (typeof(head))oldhead)
+#define atomic_insert_list_head(head, newhead, oldhead)			\
+do {									\
+	oldhead = (typeof(oldhead))head;				\
+} while (cmpxchg(&(head), oldhead, newhead) != (typeof(head))oldhead)
 
 #define atomic_remove_list_head(head, newhead)				\
 ({									\
@@ -1056,5 +933,219 @@ do {							\
 	set_current_state(TASK_INTERRUPTIBLE);		\
 	schedule_timeout(n);				\
 } while (0)
+
+int ntoskernel_init(void);
+void ntoskernel_exit(void);
+int ntoskernel_init_device(struct wrap_device *wd);
+void ntoskernel_exit_device(struct wrap_device *wd);
+void *allocate_object(ULONG size, enum common_object_type type,
+		      struct unicode_string *name);
+void free_object(void *object);
+
+int usb_init(void);
+void usb_exit(void);
+int usb_init_device(struct wrap_device *wd);
+void usb_exit_device(struct wrap_device *wd);
+void usb_cancel_pending_urbs(void);
+
+int crt_init(void);
+void crt_exit(void);
+int rtl_init(void);
+void rtl_exit(void);
+int wrap_procfs_init(void);
+void wrap_procfs_remove(void);
+
+int link_pe_images(struct pe_image *pe_image, unsigned short n);
+
+int stricmp(const char *s1, const char *s2);
+void dump_bytes(const char *name, const u8 *from, int len);
+struct mdl *allocate_init_mdl(void *virt, ULONG length);
+void free_mdl(struct mdl *mdl);
+struct driver_object *find_bus_driver(const char *name);
+void free_custom_extensions(struct driver_extension *drv_obj_ext);
+struct nt_thread *get_current_nt_thread(void);
+u64 ticks_1601(void);
+int schedule_ntos_work_item(NTOS_WORK_FUNC func, void *arg1, void *arg2);
+void wrap_init_timer(struct nt_timer *nt_timer, enum timer_type type,
+		     struct kdpc *kdpc, struct ndis_miniport_block *nmb);
+BOOLEAN wrap_set_timer(struct nt_timer *nt_timer, unsigned long expires_hz,
+		       unsigned long repeat_hz, struct kdpc *kdpc);
+
+LONG InterlockedDecrement(LONG volatile *val) wfastcall;
+LONG InterlockedIncrement(LONG volatile *val) wfastcall;
+struct nt_list *ExInterlockedInsertHeadList
+	(struct nt_list *head, struct nt_list *entry,
+	 NT_SPIN_LOCK *lock) wfastcall;
+struct nt_list *ExInterlockedInsertTailList
+	(struct nt_list *head, struct nt_list *entry,
+	 NT_SPIN_LOCK *lock) wfastcall;
+struct nt_list *ExInterlockedRemoveHeadList
+	(struct nt_list *head, NT_SPIN_LOCK *lock) wfastcall;
+NTSTATUS IofCallDriver(struct device_object *dev_obj, struct irp *irp) wfastcall;
+KIRQL KfRaiseIrql(KIRQL newirql) wfastcall;
+void KfLowerIrql(KIRQL oldirql) wfastcall;
+KIRQL KfAcquireSpinLock(NT_SPIN_LOCK *lock) wfastcall;
+void KfReleaseSpinLock(NT_SPIN_LOCK *lock, KIRQL oldirql) wfastcall;
+void IofCompleteRequest(struct irp *irp, CHAR prio_boost) wfastcall;
+void KefReleaseSpinLockFromDpcLevel(NT_SPIN_LOCK *lock) wfastcall;
+
+LONG ObfReferenceObject(void *object) wfastcall;
+void ObfDereferenceObject(void *object) wfastcall;
+
+#define ObReferenceObject(object) ObfReferenceObject(object)
+#define ObDereferenceObject(object) ObfDereferenceObject(object)
+
+void WRITE_PORT_UCHAR(ULONG_PTR port, UCHAR value) wstdcall;
+UCHAR READ_PORT_UCHAR(ULONG_PTR port) wstdcall;
+
+#undef ExAllocatePoolWithTag
+void *ExAllocatePoolWithTag(enum pool_type pool_type, SIZE_T size,
+			    ULONG tag) wstdcall;
+#if defined(ALLOC_DEBUG) && ALLOC_DEBUG > 1
+#define ExAllocatePoolWithTag(pool_type, size, tag)			\
+	wrap_ExAllocatePoolWithTag(pool_type, size, tag, __FILE__, __LINE__)
+#endif
+
+void ExFreePool(void *p) wstdcall;
+ULONG MmSizeOfMdl(void *base, ULONG length) wstdcall;
+void *MmMapIoSpace(PHYSICAL_ADDRESS phys_addr, SIZE_T size,
+		   enum memory_caching_type cache) wstdcall;
+void MmUnmapIoSpace(void *addr, SIZE_T size) wstdcall;
+void MmProbeAndLockPages(struct mdl *mdl, KPROCESSOR_MODE access_mode,
+			 enum lock_operation operation) wstdcall;
+void MmUnlockPages(struct mdl *mdl) wstdcall;
+void KeInitializeEvent(struct nt_event *nt_event,
+		       enum event_type type, BOOLEAN state) wstdcall;
+LONG KeSetEvent(struct nt_event *nt_event, KPRIORITY incr,
+		BOOLEAN wait) wstdcall;
+LONG KeResetEvent(struct nt_event *nt_event) wstdcall;
+void KeClearEvent(struct nt_event *nt_event) wstdcall;
+void KeInitializeDpc(struct kdpc *kdpc, void *func, void *ctx) wstdcall;
+BOOLEAN queue_kdpc(struct kdpc *kdpc);
+BOOLEAN dequeue_kdpc(struct kdpc *kdpc);
+
+void KeFlushQueuedDpcs(void) wstdcall;
+NTSTATUS IoConnectInterrupt(struct kinterrupt **kinterrupt,
+			    PKSERVICE_ROUTINE service_routine,
+			    void *service_context, NT_SPIN_LOCK *lock,
+			    ULONG vector, KIRQL irql, KIRQL synch_irql,
+			    enum kinterrupt_mode interrupt_mode,
+			    BOOLEAN shareable, KAFFINITY processor_enable_mask,
+			    BOOLEAN floating_save) wstdcall;
+void IoDisconnectInterrupt(struct kinterrupt *interrupt) wstdcall;
+BOOLEAN KeSynchronizeExecution(struct kinterrupt *interrupt,
+			       PKSYNCHRONIZE_ROUTINE synch_routine,
+			       void *ctx) wstdcall;
+
+NTSTATUS KeWaitForSingleObject(void *object, KWAIT_REASON reason,
+			       KPROCESSOR_MODE waitmode, BOOLEAN alertable,
+			       LARGE_INTEGER *timeout) wstdcall;
+struct mdl *IoAllocateMdl(void *virt, ULONG length, BOOLEAN second_buf,
+			  BOOLEAN charge_quota, struct irp *irp) wstdcall;
+void MmBuildMdlForNonPagedPool(struct mdl *mdl) wstdcall;
+void IoFreeMdl(struct mdl *mdl) wstdcall;
+NTSTATUS IoCreateDevice(struct driver_object *driver, ULONG dev_ext_length,
+			struct unicode_string *dev_name, DEVICE_TYPE dev_type,
+			ULONG dev_chars, BOOLEAN exclusive,
+			struct device_object **dev_obj) wstdcall;
+NTSTATUS IoCreateSymbolicLink(struct unicode_string *link,
+			      struct unicode_string *dev_name) wstdcall;
+void IoDeleteDevice(struct device_object *dev) wstdcall;
+void IoDetachDevice(struct device_object *topdev) wstdcall;
+struct device_object *IoGetAttachedDevice(struct device_object *dev) wstdcall;
+struct device_object *IoGetAttachedDeviceReference
+	(struct device_object *dev) wstdcall;
+NTSTATUS IoAllocateDriverObjectExtension
+	(struct driver_object *drv_obj, void *client_id, ULONG extlen,
+	 void **ext) wstdcall;
+void *IoGetDriverObjectExtension(struct driver_object *drv,
+				 void *client_id) wstdcall;
+struct device_object *IoAttachDeviceToDeviceStack
+	(struct device_object *src, struct device_object *dst) wstdcall;
+void KeInitializeEvent(struct nt_event *nt_event, enum event_type type,
+		       BOOLEAN state) wstdcall;
+struct irp *IoAllocateIrp(char stack_count, BOOLEAN charge_quota) wstdcall;
+void IoFreeIrp(struct irp *irp) wstdcall;
+BOOLEAN IoCancelIrp(struct irp *irp) wstdcall;
+struct irp *IoBuildSynchronousFsdRequest
+	(ULONG major_func, struct device_object *dev_obj, void *buf,
+	 ULONG length, LARGE_INTEGER *offset, struct nt_event *event,
+	 struct io_status_block *status) wstdcall;
+struct irp *IoBuildAsynchronousFsdRequest
+	(ULONG major_func, struct device_object *dev_obj, void *buf,
+	 ULONG length, LARGE_INTEGER *offset,
+	 struct io_status_block *status) wstdcall;
+NTSTATUS PoCallDriver(struct device_object *dev_obj, struct irp *irp) wstdcall;
+
+NTSTATUS IoPassIrpDown(struct device_object *dev_obj, struct irp *irp) wstdcall;
+WIN_FUNC_DECL(IoPassIrpDown,2);
+NTSTATUS IoSyncForwardIrp(struct device_object *dev_obj,
+			  struct irp *irp) wstdcall;
+NTSTATUS IoAsyncForwardIrp(struct device_object *dev_obj,
+			   struct irp *irp) wstdcall;
+NTSTATUS IoInvalidDeviceRequest(struct device_object *dev_obj,
+				struct irp *irp) wstdcall;
+
+KIRQL KeGetCurrentIrql(void) wstdcall;
+void KeInitializeSpinLock(NT_SPIN_LOCK *lock) wstdcall;
+void KeAcquireSpinLock(NT_SPIN_LOCK *lock, KIRQL *irql) wstdcall;
+void KeReleaseSpinLock(NT_SPIN_LOCK *lock, KIRQL oldirql) wstdcall;
+KIRQL KeAcquireSpinLockRaiseToDpc(NT_SPIN_LOCK *lock) wstdcall;
+
+void IoAcquireCancelSpinLock(KIRQL *irql) wstdcall;
+void IoReleaseCancelSpinLock(KIRQL irql) wstdcall;
+
+void RtlCopyMemory(void *dst, const void *src, SIZE_T length) wstdcall;
+NTSTATUS RtlUnicodeStringToAnsiString
+	(struct ansi_string *dst, const struct unicode_string *src,
+	 BOOLEAN dup) wstdcall;
+NTSTATUS RtlAnsiStringToUnicodeString
+	(struct unicode_string *dst, const struct ansi_string *src,
+	 BOOLEAN dup) wstdcall;
+void RtlInitAnsiString(struct ansi_string *dst, const char *src) wstdcall;
+void RtlInitString(struct ansi_string *dst, const char *src) wstdcall;
+void RtlInitUnicodeString(struct unicode_string *dest,
+			  const wchar_t *src) wstdcall;
+void RtlFreeUnicodeString(struct unicode_string *string) wstdcall;
+void RtlFreeAnsiString(struct ansi_string *string) wstdcall;
+LONG RtlCompareUnicodeString(const struct unicode_string *s1,
+			     const struct unicode_string *s2,
+			     BOOLEAN case_insensitive) wstdcall;
+void RtlCopyUnicodeString(struct unicode_string *dst,
+			  struct unicode_string *src) wstdcall;
+void KeInitializeTimer(struct nt_timer *nt_timer) wstdcall;
+void KeInitializeTimerEx(struct nt_timer *nt_timer,
+			 enum timer_type type) wstdcall;
+BOOLEAN KeSetTimerEx(struct nt_timer *nt_timer, LARGE_INTEGER duetime_ticks,
+		     LONG period_ms, struct kdpc *kdpc) wstdcall;
+BOOLEAN KeSetTimer(struct nt_timer *nt_timer, LARGE_INTEGER duetime_ticks,
+		   struct kdpc *kdpc) wstdcall;
+BOOLEAN KeCancelTimer(struct nt_timer *nt_timer) wstdcall;
+void KeInitializeDpc(struct kdpc *kdpc, void *func, void *ctx) wstdcall;
+struct nt_thread *KeGetCurrentThread(void) wstdcall;
+NTSTATUS ObReferenceObjectByHandle(void *handle, ACCESS_MASK desired_access,
+				   void *obj_type, KPROCESSOR_MODE access_mode,
+				   void **object, void *handle_info) wstdcall;
+
+void adjust_user_shared_data_addr(char *driver, unsigned long length);
+
+#define IoCompleteRequest(irp, prio) IofCompleteRequest(irp, prio)
+#define IoCallDriver(dev, irp) IofCallDriver(dev, irp)
+
+#if defined(IO_DEBUG)
+#define DUMP_IRP(irp)							\
+do {									\
+	struct io_stack_location *irp_sl;				\
+	irp_sl = IoGetCurrentIrpStackLocation(irp);			\
+	IOTRACE("irp: %p, stack size: %d, cl: %d, sl: %p, dev_obj: %p, " \
+		"mj_fn: %d, minor_fn: %d, nt_urb: %p, event: %p",	\
+		irp, irp->stack_count, (irp)->current_location,		\
+		irp_sl, irp_sl->dev_obj, irp_sl->major_fn,		\
+		irp_sl->minor_fn, IRP_URB(irp),				\
+		(irp)->user_event);					\
+} while (0)
+#else
+#define DUMP_IRP(irp) do { } while (0)
+#endif
 
 #endif // _NTOSKERNEL_H_

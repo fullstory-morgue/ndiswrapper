@@ -179,7 +179,6 @@ struct v4_checksum {
 		};
 		ULONG value;
 	};
-
 };
 
 struct v6_checksum {
@@ -392,7 +391,7 @@ struct net_pnp_event {
 
 struct ndis_pnp_capabilities {
 	ULONG flags;
-	struct ndis_pm_wakeup_capabilities wakeup_capa;
+	struct ndis_pm_wakeup_capabilities wakeup;
 };
 
 typedef void (*ndis_isr_handler)(BOOLEAN *recognized, BOOLEAN *queue_handler,
@@ -425,9 +424,8 @@ struct miniport_char {
 			       ULONG buflen, ULONG *written,
 			       ULONG *needed) wstdcall;
 	NDIS_STATUS (*tx_data)(struct ndis_packet *ndis_packet,
-			       UINT *bytes_txed, void *adapter_ctx,
-			       void *rx_ctx, UINT offset,
-			       UINT bytes_to_tx) wstdcall;
+			       UINT *bytes_txed, void *mp_ctx, void *rx_ctx,
+			       UINT offset, UINT bytes_to_tx) wstdcall;
 	/* NDIS 4.0 extensions */
 	void (*return_packet)(void *ctx, void *packet) wstdcall;
 	void (*send_packets)(void *ctx, struct ndis_packet **packets,
@@ -532,7 +530,7 @@ struct ndis_binary_data {
 
 enum ndis_parameter_type {
 	NdisParameterInteger, NdisParameterHexInteger,
-	NdisParameterString, NdisParameterMultiString,
+	NdisParameterString, NdisParameterMultiString, NdisParameterBinary,
 };
 
 typedef struct unicode_string NDIS_STRING;
@@ -736,7 +734,7 @@ struct ndis_miniport_block {
 	void *signature;
 	struct ndis_miniport_block *next;
 	struct driver_object *drv_obj;
-	void *adapter_ctx;
+	void *mp_ctx;
 	struct unicode_string name;
 	struct ndis_bind_paths *bindpaths;
 	void *openqueue;
@@ -889,10 +887,11 @@ struct wrap_ndis_device {
 	struct v4_checksum rx_csum;
 	struct v4_checksum tx_csum;
 	enum ndis_physical_medium physical_medium;
-	u32 ndis_wolopts;
+	ULONG ndis_wolopts;
 	struct nt_list wrap_timer_list;
 	char netdev_name[IFNAMSIZ];
 	int drv_ndis_version;
+	struct ndis_pnp_capabilities pnp_capa;
 };
 
 struct ndis_pmkid_candidate {
@@ -906,7 +905,7 @@ struct ndis_pmkid_candidate_list {
 	struct ndis_pmkid_candidate candidates[1];
 };
 
-irqreturn_t ndis_isr(int irq, void *data ISR_PT_REGS_PARAM_DECL);
+BOOLEAN ndis_isr(struct kinterrupt *kinterrupt, void *ctx) wstdcall;
 
 int ndis_init(void);
 void ndis_exit(void);

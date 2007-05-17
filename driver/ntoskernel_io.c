@@ -39,11 +39,10 @@ wstdcall int WIN_FUNC(IoIsWdmVersionAvailable,2)
 	(UCHAR major, UCHAR minor)
 {
 	IOENTER("%d, %x", major, minor);
-	if ((major == 6 && minor == 0x00) || // Vista
-	    (major == 1 &&
-	     (minor == 0x30 || // Windows 2003
-	      minor == 0x20 || // Windows XP
-	      minor == 0x10))) // Windows 2000
+	if (major == 1 &&
+	    (minor == 0x30 || // Windows 2003
+	     minor == 0x20 || // Windows XP
+	     minor == 0x10)) // Windows 2000
 		IOEXIT(return TRUE);
 	IOEXIT(return FALSE);
 }
@@ -95,7 +94,7 @@ wstdcall struct irp *WIN_FUNC(IoAllocateIrp,2)
 	IOENTER("count: %d", stack_count);
 	stack_count++;
 	irp_size = IoSizeOfIrp(stack_count);
-	irp = kmalloc(irp_size, gfp_irql());
+	irp = kmalloc(irp_size, irql_gfp());
 	if (irp)
 		IoInitializeIrp(irp, irp_size, stack_count);
 	IOTRACE("irp %p", irp);
@@ -524,22 +523,23 @@ static irqreturn_t io_irq_isr(int irq, void *data ISR_PT_REGS_PARAM_DECL)
 	struct kinterrupt *interrupt = data;
 	BOOLEAN ret;
 
-	nt_spin_lock(&interrupt->lock);
-	ret = LIN2WIN2(interrupt->service_routine, interrupt,
-		       interrupt->service_context);
-	nt_spin_unlock(&interrupt->lock);
+	TRACE6("%p", interrupt);
+	/* use nt_spin_lock_warp_preempt so ISR runs at IRQL
+	 * DISPATCH_LEVEL */
+	nt_spin_lock_warp_preempt(interrupt->actual_lock);
+	ret = LIN2WIN2(interrupt->isr, interrupt, interrupt->isr_ctx);
+	nt_spin_unlock_warp_preempt(interrupt->actual_lock);
 	if (ret == TRUE)
-		return IRQ_HANDLED;
+		EXIT6(return IRQ_HANDLED);
 	else
-		return IRQ_NONE;
+		EXIT6(return IRQ_NONE);
 }
 
 wstdcall NTSTATUS WIN_FUNC(IoConnectInterrupt,11)
-	(struct kinterrupt **kinterrupt, PKSERVICE_ROUTINE service_routine,
-	 void *service_context, NT_SPIN_LOCK *lock, ULONG vector,
-	 KIRQL irql, KIRQL synch_irql, enum kinterrupt_mode interrupt_mode,
-	 BOOLEAN shareable, KAFFINITY processor_enable_mask,
-	 BOOLEAN floating_save)
+	(struct kinterrupt **kinterrupt, PKSERVICE_ROUTINE isr, void *isr_ctx,
+	 NT_SPIN_LOCK *lock, ULONG vector, KIRQL irql, KIRQL synch_irql,
+	 enum kinterrupt_mode mode, BOOLEAN shared, KAFFINITY cpu_mask,
+	 BOOLEAN save_fp)
 {
 	struct kinterrupt *interrupt;
 	IOENTER("");
@@ -548,22 +548,22 @@ wstdcall NTSTATUS WIN_FUNC(IoConnectInterrupt,11)
 		IOEXIT(return STATUS_INSUFFICIENT_RESOURCES);
 	memset(interrupt, 0, sizeof(*interrupt));
 	interrupt->vector = vector;
-	interrupt->processor_enable_mask = processor_enable_mask;
+	interrupt->cpu_mask = cpu_mask;
 	nt_spin_lock_init(&interrupt->lock);
 	if (lock)
 		interrupt->actual_lock = lock;
 	else
 		interrupt->actual_lock = &interrupt->lock;
-	interrupt->shareable = shareable;
-	interrupt->floating_save = floating_save;
-	interrupt->service_routine = service_routine;
-	interrupt->service_context = service_context;
+	interrupt->shared = shared;
+	interrupt->save_fp = save_fp;
+	interrupt->isr = isr;
+	interrupt->isr_ctx = isr_ctx;
 	InitializeListHead(&interrupt->list);
 	interrupt->irql = irql;
 	interrupt->synch_irql = synch_irql;
-	interrupt->interrupt_mode = interrupt_mode;
-	if (request_irq(vector, io_irq_isr, shareable ? IRQF_SHARED : 0,
-			"io_irq", interrupt)) {
+	interrupt->mode = mode;
+	if (request_irq(vector, io_irq_isr, shared ? IRQF_SHARED : 0,
+			"ndiswrapper", interrupt)) {
 		WARNING("request for irq %d failed", vector);
 		kfree(interrupt);
 		IOEXIT(return STATUS_INSUFFICIENT_RESOURCES);
@@ -615,7 +615,7 @@ wstdcall struct io_workitem *WIN_FUNC(IoAllocateWorkItem,1)
 	struct io_workitem *io_workitem;
 
 	IOENTER("%p", dev_obj);
-	io_workitem = kmalloc(sizeof(*io_workitem), gfp_irql());
+	io_workitem = kmalloc(sizeof(*io_workitem), irql_gfp());
 	if (!io_workitem)
 		IOEXIT(return NULL);
 	io_workitem->dev_obj = dev_obj;
@@ -656,7 +656,7 @@ wstdcall NTSTATUS WIN_FUNC(IoAllocateDriverObjectExtension,4)
 	KIRQL irql;
 
 	IOENTER("%p, %p", drv_obj, client_id);
-	ce = kmalloc(sizeof(*ce) + extlen, gfp_irql());
+	ce = kmalloc(sizeof(*ce) + extlen, irql_gfp());
 	if (ce == NULL)
 		return STATUS_INSUFFICIENT_RESOURCES;
 
@@ -1021,7 +1021,7 @@ wstdcall void *WIN_FUNC(IoAllocateErrorLogEntry,2)
 {
 	/* not implemented fully */
 	void *ret = kmalloc(sizeof(struct io_error_log_packet) + entry_size,
-			    gfp_irql());
+			    irql_gfp());
 	TRACE2("%p", ret);
 	if (ret)
 		return ret + sizeof(struct io_error_log_packet);
