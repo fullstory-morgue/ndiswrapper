@@ -90,9 +90,8 @@ WIN_SYMBOL_MAP("NlsMbCodePageTag", FALSE)
 workqueue_struct_t *ntos_wq;
 #endif
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)) && \
-	!defined(preempt_enable) && !defined(CONFIG_PREEMPT)
-volatile int preempt_count;
+#ifdef WARP_PREEMPT
+volatile int warp_preempt_count;
 #endif
 
 #if defined(CONFIG_X86_64)
@@ -284,6 +283,12 @@ wfastcall struct nt_list *WIN_FUNC(ExInterlockedRemoveTailList,2)
 	return ExfInterlockedRemoveTailList(head, lock);
 }
 
+wfastcall void WIN_FUNC(InitializeSListHead,1)
+	(nt_slist_header *head)
+{
+	memset(head, 0, sizeof(*head));
+}
+
 wfastcall struct nt_slist *WIN_FUNC(ExInterlockedPushEntrySList,3)
 	(nt_slist_header *head, struct nt_slist *entry, NT_SPIN_LOCK *lock)
 {
@@ -420,13 +425,12 @@ static void timer_proc(unsigned long data)
 	BUG_ON(wrap_timer->wrap_timer_magic != WRAP_TIMER_MAGIC);
 	BUG_ON(nt_timer->wrap_timer_magic != WRAP_TIMER_MAGIC);
 #endif
+	kdpc = nt_timer->kdpc;
+	if (kdpc)
+		queue_kdpc(kdpc);
+	KeSetEvent((struct nt_event *)nt_timer, 0, FALSE);
 	if (wrap_timer->repeat)
 		mod_timer(&wrap_timer->timer, jiffies + wrap_timer->repeat);
-	KeSetEvent((struct nt_event *)nt_timer, 0, FALSE);
-	kdpc = nt_timer->kdpc;
-	if (kdpc && kdpc->func)
-		queue_kdpc(kdpc);
-
 	TIMEREXIT(return);
 }
 
@@ -447,7 +451,7 @@ void wrap_init_timer(struct nt_timer *nt_timer, enum timer_type type,
 	 * freed, so we use slack_kmalloc so it gets freed when driver
 	 * is unloaded */
 	if (nmb)
-		wrap_timer = kmalloc(sizeof(*wrap_timer), gfp_irql());
+		wrap_timer = kmalloc(sizeof(*wrap_timer), irql_gfp());
 	else
 		wrap_timer = slack_kmalloc(sizeof(*wrap_timer));
 	if (!wrap_timer) {
@@ -500,7 +504,6 @@ BOOLEAN wrap_set_timer(struct nt_timer *nt_timer, unsigned long expires_hz,
 	TIMERENTER("%p, %lu, %lu, %p, %lu",
 		   nt_timer, expires_hz, repeat_hz, kdpc, jiffies);
 
-	KeClearEvent((struct nt_event *)nt_timer);
 	wrap_timer = nt_timer->wrap_timer;
 	TIMERTRACE("%p", wrap_timer);
 #ifdef TIMER_DEBUG
@@ -508,7 +511,7 @@ BOOLEAN wrap_set_timer(struct nt_timer *nt_timer, unsigned long expires_hz,
 		WARNING("bad timers: %p, %p, %p", wrap_timer, nt_timer,
 			wrap_timer->nt_timer);
 	if (nt_timer->wrap_timer_magic != WRAP_TIMER_MAGIC) {
-		WARNING("Buggy Windows timer didn't initialize timer %p",
+		WARNING("buggy Windows timer didn't initialize timer %p",
 			nt_timer);
 		return FALSE;
 	}
@@ -518,6 +521,7 @@ BOOLEAN wrap_set_timer(struct nt_timer *nt_timer, unsigned long expires_hz,
 		wrap_timer->wrap_timer_magic = WRAP_TIMER_MAGIC;
 	}
 #endif
+	KeClearEvent((struct nt_event *)nt_timer);
 	if (kdpc)
 		nt_timer->kdpc = kdpc;
 	wrap_timer->repeat = repeat_hz;
@@ -567,8 +571,8 @@ wstdcall BOOLEAN WIN_FUNC(KeCancelTimer,1)
 	 * won't be re-armed after deleting */
 	wrap_timer->repeat = 0;
 	ret = del_timer(&wrap_timer->timer);
-	if (nt_timer->kdpc)
-		dequeue_kdpc(nt_timer->kdpc);
+	/* the documentation for KeCancelTimer suggests the DPC is
+	 * deqeued, but actually DPC is left to run */
 	if (ret)
 		TIMEREXIT(return TRUE);
 	else
@@ -720,7 +724,7 @@ int schedule_ntos_work_item(NTOS_WORK_FUNC func, void *arg1, void *arg2)
 	KIRQL irql;
 
 	WORKENTER("adding work: %p, %p, %p", func, arg1, arg2);
-	ntos_work_item = kmalloc(sizeof(*ntos_work_item), gfp_irql());
+	ntos_work_item = kmalloc(sizeof(*ntos_work_item), irql_gfp());
 	if (!ntos_work_item) {
 		ERROR("couldn't allocate memory");
 		return -ENOMEM;
@@ -806,36 +810,15 @@ wstdcall void *WIN_FUNC(ExAllocatePoolWithTag,3)
 
 	ENTER4("pool_type: %d, size: %lu, tag: 0x%x", pool_type, size, tag);
 	if (size < PAGE_SIZE)
-		addr = kmalloc(size, gfp_irql());
+		addr = kmalloc(size, irql_gfp());
 	else {
-		KIRQL irql = current_irql();
-
-		if (irql < DISPATCH_LEVEL) {
-			addr = vmalloc(size);
-			TRACE1("%p, %lu", addr, size);
-		} else if (irql == DISPATCH_LEVEL) {
+		if (irql_gfp() & GFP_ATOMIC) {
 			addr = __vmalloc(size, GFP_ATOMIC | __GFP_HIGHMEM,
 					 PAGE_KERNEL);
 			TRACE1("%p, %lu", addr, size);
 		} else {
-			TRACE1("Windows driver allocating %lu bytes in "
-			       "interrupt context: 0x%x", size, preempt_count());
-			DBG_BLOCK(2) {
-				dump_stack();
-			}
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18)
-			/* 2.6.19+ kernels don't allow __vmalloc (even
-			 * with GFP_ATOMIC) in interrupt context */
-			addr = NULL;
-#else
-			addr = __vmalloc(size, GFP_ATOMIC | __GFP_HIGHMEM,
-					 PAGE_KERNEL);
-#endif
-			if (addr)
-				TRACE1("%p, %lu", addr, size);
-			else
-				WARNING("couldn't allocate %lu bytes of memory "
-					"at %d", size, irql);
+			addr = vmalloc(size);
+			TRACE1("%p, %lu", addr, size);
 		}
 	}
 
@@ -854,11 +837,11 @@ wstdcall void WIN_FUNC(ExFreePoolWithTag,2)
 	(void *addr, ULONG tag)
 {
 	TRACE4("%p", addr);
-	if ((unsigned long)addr >= VMALLOC_START &&
-	    (unsigned long)addr < VMALLOC_END)
-		vfree(addr);
-	else
+	if ((unsigned long)addr < VMALLOC_START ||
+	    (unsigned long)addr >= VMALLOC_END)
 		kfree(addr);
+	else
+		vfree(addr);
 
 	EXIT4(return);
 }
@@ -1166,6 +1149,7 @@ wstdcall NTSTATUS WIN_FUNC(KeWaitForMultipleObjects,8)
 					continue;
 				EVENTTRACE("%p: timedout, dequeue %p (%p)",
 					   current, object[i], wb[i].object);
+				assert(wb[i].object == NULL);
 				RemoveEntryList(&wb[i].list);
 			}
 			nt_spin_unlock_bh(&dispatcher_lock);
@@ -1252,9 +1236,7 @@ wstdcall void WIN_FUNC(KeClearEvent,1)
 	(struct nt_event *nt_event)
 {
 	EVENTENTER("%p", nt_event);
-	nt_spin_lock_bh(&dispatcher_lock);
 	nt_event->dh.signal_state = 0;
-	nt_spin_unlock_bh(&dispatcher_lock);
 	EVENTEXIT(return);
 }
 
@@ -1264,11 +1246,7 @@ wstdcall LONG WIN_FUNC(KeResetEvent,1)
 	LONG old_state;
 
 	EVENTENTER("%p", nt_event);
-	nt_spin_lock_bh(&dispatcher_lock);
-	old_state = nt_event->dh.signal_state;
-	nt_event->dh.signal_state = 0;
-	nt_spin_unlock_bh(&dispatcher_lock);
-	EVENTTRACE("%d", old_state);
+	old_state = xchg(&nt_event->dh.signal_state, 0);
 	EVENTEXIT(return old_state);
 }
 
@@ -1277,9 +1255,7 @@ wstdcall LONG WIN_FUNC(KeReadStateEvent,1)
 {
 	LONG state;
 
-	nt_spin_lock_bh(&dispatcher_lock);
 	state = nt_event->dh.signal_state;
-	nt_spin_unlock_bh(&dispatcher_lock);
 	EVENTTRACE("%d", state);
 	return state;
 }
@@ -1425,6 +1401,21 @@ wstdcall LARGE_INTEGER WIN_FUNC(KeQueryPerformanceCounter,1)
 	return jiffies;
 }
 
+wstdcall KAFFINITY WIN_FUNC(KeQueryActiveProcessors,0)
+	(void)
+{
+	int i, n;
+	KAFFINITY bits = 0;
+#ifdef num_online_cpus
+	n = num_online_cpus();
+#else
+	n = NR_CPUS;
+#endif
+	for (i = 0; i < n; i++)
+		bits = (bits << 1) | 1;
+	return bits;
+}
+
 struct nt_thread *get_current_nt_thread(void)
 {
 	struct task_struct *task = current;
@@ -1563,7 +1554,7 @@ wstdcall KPRIORITY WIN_FUNC(KeSetPriorityThread,2)
 	else if (prio == HIGH_PRIORITY)
 		set_thread_priority(task, -10);
 
-	TRACE2("%d, %d", old_prio, thread_priority(task));
+	TRACE2("%d, %d", old_prio, (int)thread_priority(task));
 	return old_prio;
 }
 
@@ -1700,9 +1691,10 @@ wstdcall BOOLEAN WIN_FUNC(KeSynchronizeExecution,3)
 	BOOLEAN ret;
 	unsigned long flags;
 
-	nt_spin_lock_irqsave(&interrupt->lock, flags);
+	nt_spin_lock_irqsave(interrupt->actual_lock, flags);
 	ret = LIN2WIN1(synch_routine, ctx);
-	nt_spin_unlock_irqrestore(&interrupt->lock, flags);
+	nt_spin_unlock_irqrestore(interrupt->actual_lock, flags);
+	TRACE6("%d", ret);
 	return ret;
 }
 
@@ -1711,23 +1703,46 @@ wstdcall void *WIN_FUNC(MmAllocateContiguousMemorySpecifyCache,5)
 	 PHYSICAL_ADDRESS boundary, enum memory_caching_type cache_type)
 {
 	void *addr;
-	addr = wrap_get_free_pages(gfp_irql(), size);
-	TRACE4("%p, %lu", addr, size);
+	unsigned int flags;
+
+	ENTER2("%lu, 0x%lx, 0x%lx, 0x%lx, %d", size, (long)lowest,
+	       (long)highest, (long)boundary, cache_type);
+	flags = irql_gfp();
+	addr = wrap_get_free_pages(flags, size);
+	TRACE2("%p, %lu, 0x%x", addr, size, flags);
+	if (addr && ((virt_to_phys(addr) + size) <= highest))
+		EXIT2(return addr);
+#ifdef CONFIG_X86_64
+	/* GFP_DMA is really only 16MB even on x86-64, but there is no
+	 * other zone available */
+	if (highest <= DMA_31BIT_MASK)
+		flags |= __GFP_DMA;
+	else if (highest <= DMA_32BIT_MASK)
+		flags |= __GFP_DMA32;
+#else
+	if (highest <= DMA_24BIT_MASK)
+		flags |= __GFP_DMA;
+	else if (highest > DMA_30BIT_MASK)
+		flags |= __GFP_HIGHMEM;
+#endif
+	addr = wrap_get_free_pages(flags, size);
+	TRACE2("%p, %lu, 0x%x", addr, size, flags);
 	return addr;
 }
 
 wstdcall void WIN_FUNC(MmFreeContiguousMemorySpecifyCache,3)
 	(void *base, SIZE_T size, enum memory_caching_type cache_type)
 {
-	TRACE4("%p, %lu", base, size);
+	TRACE2("%p, %lu", base, size);
 	free_pages((unsigned long)base, get_order(size));
 }
 
 wstdcall PHYSICAL_ADDRESS WIN_FUNC(MmGetPhysicalAddress,1)
 	(void *base)
 {
-	TRACE2("%p", base);
-	return virt_to_phys(base);
+	unsigned long phy = virt_to_phys(base);
+	TRACE2("%p, %p", base, (void *)phy);
+	return phy;
 }
 
 /* Atheros card with pciid 168C:0014 calls this function with 0xf0000
@@ -1773,7 +1788,7 @@ struct mdl *allocate_init_mdl(void *virt, ULONG length)
 	int mdl_size = MmSizeOfMdl(virt, length);
 
 	if (mdl_size <= MDL_CACHE_SIZE) {
-		wrap_mdl = kmem_cache_alloc(mdl_cache, gfp_irql());
+		wrap_mdl = kmem_cache_alloc(mdl_cache, irql_gfp());
 		if (!wrap_mdl)
 			return NULL;
 		nt_spin_lock_bh(&dispatcher_lock);
@@ -1789,7 +1804,7 @@ struct mdl *allocate_init_mdl(void *virt, ULONG length)
 		mdl->flags = MDL_ALLOCATED_FIXED_SIZE | MDL_CACHE_ALLOCATED;
 	} else {
 		wrap_mdl =
-			kmalloc(sizeof(*wrap_mdl) + mdl_size, gfp_irql());
+			kmalloc(sizeof(*wrap_mdl) + mdl_size, irql_gfp());
 		if (!wrap_mdl)
 			return NULL;
 		mdl = wrap_mdl->mdl;
@@ -1986,7 +2001,7 @@ wfastcall void WIN_FUNC(ObfDereferenceObject,1)
 
 wstdcall NTSTATUS WIN_FUNC(ZwCreateFile,11)
 	(void **handle, ACCESS_MASK access_mask,
-	 struct object_attributes *obj_attr,struct io_status_block *iosb,
+	 struct object_attributes *obj_attr, struct io_status_block *iosb,
 	 LARGE_INTEGER *size, ULONG file_attr, ULONG share_access,
 	 ULONG create_disposition, ULONG create_options, void *ea_buffer,
 	 ULONG ea_length)
@@ -2081,6 +2096,16 @@ wstdcall NTSTATUS WIN_FUNC(ZwCreateFile,11)
 	TRACE2("handle: %p", *handle);
 	status = STATUS_SUCCESS;
 	EXIT2(return status);
+}
+
+wstdcall NTSTATUS WIN_FUNC(ZwOpenFile,6)
+	(void **handle, ACCESS_MASK access_mask,
+	 struct object_attributes *obj_attr, struct io_status_block *iosb,
+	 ULONG share_access, ULONG open_options)
+{
+	LARGE_INTEGER size;
+	return ZwCreateFile(handle, access_mask, obj_attr, iosb, &size, 0,
+			    share_access, 0, open_options, NULL, 0);
 }
 
 wstdcall NTSTATUS WIN_FUNC(ZwReadFile,9)
@@ -2503,9 +2528,8 @@ int ntoskernel_init(void)
 	wrap_ticks_to_boot += now.tv_usec * 10;
 	wrap_ticks_to_boot -= jiffies * TICKSPERJIFFY;
 	TRACE2("%Lu", wrap_ticks_to_boot);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)) && \
-	!defined(preempt_enable) && !defined(CONFIG_PREEMPT)
-	preempt_count = 0;
+#ifdef WARP_PREEMPT
+	warp_preempt_count = 0;
 #endif
 
 #ifdef USE_NTOS_WQ

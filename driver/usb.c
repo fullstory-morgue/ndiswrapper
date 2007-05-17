@@ -275,7 +275,7 @@ wstdcall void wrap_cancel_irp(struct device_object *dev_obj, struct irp *irp)
 	IoReleaseCancelSpinLock(irp->cancel_irql);
 	return;
 }
-WIN_FUNC_DECL(wrap_cancel_irp,2)
+WIN_FUNC_DECL(wrap_cancel_irp,2);
 
 static struct urb *wrap_alloc_urb(struct irp *irp, unsigned int pipe,
 				  void *buf, unsigned int buf_len)
@@ -287,7 +287,7 @@ static struct urb *wrap_alloc_urb(struct irp *irp, unsigned int pipe,
 
 	USBENTER("irp: %p", irp);
 	wd = IRP_WRAP_DEVICE(irp);
-	alloc_flags = gfp_irql();
+	alloc_flags = irql_gfp();
 	IoAcquireCancelSpinLock(&irp->cancel_irql);
 	urb = NULL;
 	nt_list_for_each_entry(wrap_urb, &wd->usb.wrap_urb_list, list) {
@@ -392,7 +392,7 @@ static USBD_STATUS wrap_submit_urb(struct irp *irp)
 	USBTRACE("%p", urb);
 	IRP_WRAP_URB(irp)->state = URB_SUBMITTED;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-	ret = usb_submit_urb(urb, gfp_irql());
+	ret = usb_submit_urb(urb, irql_gfp());
 #else
 	ret = usb_submit_urb(urb);
 #endif
