@@ -145,14 +145,14 @@ static int load_sys_files(struct wrap_driver *driver,
 {
 	int i, err;
 
-	TRACE1("num_pe_images = %d", load_driver->nr_sys_files);
+	TRACE1("num_pe_images = %d", load_driver->num_sys_files);
 	TRACE1("loading driver: %s", load_driver->name);
 	strncpy(driver->name, load_driver->name, sizeof(driver->name));
 	driver->name[sizeof(driver->name)-1] = 0;
 	TRACE1("driver: %s", driver->name);
 	err = 0;
 	driver->num_pe_images = 0;
-	for (i = 0; i < load_driver->nr_sys_files; i++) {
+	for (i = 0; i < load_driver->num_sys_files; i++) {
 		struct pe_image *pe_image;
 		pe_image = &driver->pe_images[driver->num_pe_images];
 
@@ -217,7 +217,7 @@ static int load_sys_files(struct wrap_driver *driver,
 		err = -EINVAL;
 	}
 
-	if (driver->num_pe_images < load_driver->nr_sys_files || err) {
+	if (driver->num_pe_images < load_driver->num_sys_files || err) {
 		for (i = 0; i < driver->num_pe_images; i++)
 			if (driver->pe_images[i].image)
 				vfree(driver->pe_images[i].image);
@@ -351,22 +351,26 @@ static int load_bin_files_info(struct wrap_driver *driver,
 	struct wrap_bin_file *bin_files;
 	int i;
 
-	ENTER1("loading bin files for driver %s", load_driver->name);
-	bin_files = kmalloc(load_driver->nr_bin_files * sizeof(*bin_files),
+	ENTER1("%s, %d", load_driver->name, load_driver->num_bin_files);
+	driver->num_bin_files = 0;
+	driver->bin_files = NULL;
+	if (load_driver->num_bin_files == 0)
+		EXIT1(return 0);
+	bin_files = kmalloc(load_driver->num_bin_files * sizeof(*bin_files),
 			    GFP_KERNEL);
 	if (!bin_files) {
 		ERROR("couldn't allocate memory");
 		EXIT1(return -ENOMEM);
 	}
-	memset(bin_files, 0, load_driver->nr_bin_files * sizeof(*bin_files));
+	memset(bin_files, 0, load_driver->num_bin_files * sizeof(*bin_files));
 
-	for (i = 0; i < load_driver->nr_bin_files; i++) {
+	for (i = 0; i < load_driver->num_bin_files; i++) {
 		strncpy(bin_files[i].name, load_driver->bin_files[i].name,
 			sizeof(bin_files[i].name));
 		bin_files[i].name[sizeof(bin_files[i].name)-1] = 0;
 		TRACE2("loaded bin file %s", bin_files[i].name);
 	}
-	driver->num_bin_files = load_driver->nr_bin_files;
+	driver->num_bin_files = load_driver->num_bin_files;
 	driver->bin_files = bin_files;
 	EXIT1(return 0);
 }
@@ -375,12 +379,12 @@ static int load_bin_files_info(struct wrap_driver *driver,
 static int load_settings(struct wrap_driver *wrap_driver,
 			 struct load_driver *load_driver)
 {
-	int i, nr_settings;
+	int i, num_settings;
 
 	ENTER1("%p, %p", wrap_driver, load_driver);
 
-	nr_settings = 0;
-	for (i = 0; i < load_driver->nr_settings; i++) {
+	num_settings = 0;
+	for (i = 0; i < load_driver->num_settings; i++) {
 		struct load_device_setting *load_setting =
 			&load_driver->settings[i];
 		struct wrap_device_setting *setting;
@@ -413,10 +417,10 @@ static int load_settings(struct wrap_driver *wrap_driver,
 			}
 		}
 		InsertTailList(&wrap_driver->settings, &setting->list);
-		nr_settings++;
+		num_settings++;
 	}
 	/* it is not a fatal error if some settings couldn't be loaded */
-	if (nr_settings > 0)
+	if (num_settings > 0)
 		EXIT1(return 0);
 	else
 		EXIT1(return -EINVAL);

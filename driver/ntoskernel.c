@@ -69,8 +69,7 @@ static struct nt_thread *ntos_worker_thread;
 NT_SPIN_LOCK irp_cancel_lock;
 
 extern struct nt_list wrap_drivers;
-static struct nt_list wrap_timer_list;
-NT_SPIN_LOCK timer_lock;
+static struct nt_slist wrap_timer_slist;
 
 /* compute ticks (100ns) since 1601 until when system booted into
  * wrap_ticks_to_boot */
@@ -86,12 +85,15 @@ WIN_SYMBOL_MAP("KeTickCount", &jiffies)
 
 WIN_SYMBOL_MAP("NlsMbCodePageTag", FALSE)
 
-#ifdef USE_NTOS_WQ
+#ifdef NTOS_WQ
 workqueue_struct_t *ntos_wq;
 #endif
 
-#ifdef WARP_PREEMPT
-volatile int warp_preempt_count;
+#if defined(WARP_PREEMPT)
+int warp_preempt_count;
+#elif defined(CONFIG_PREEMPT_RT)
+DEFINE_PER_CPU(int, warp_preempt_count);
+DEFINE_PER_CPU(spinlock_t, warp_preempt_lock);
 #endif
 
 #if defined(CONFIG_X86_64)
@@ -192,8 +194,10 @@ struct driver_object *find_bus_driver(const char *name)
 	irql = nt_spin_lock_irql(&ntoskernel_lock, DISPATCH_LEVEL);
 	drv_obj = NULL;
 	nt_list_for_each_entry(bus_driver, &bus_driver_list, list) {
-		if (strcmp(bus_driver->name, name) == 0)
+		if (strcmp(bus_driver->name, name) == 0) {
 			drv_obj = &bus_driver->drv_obj;
+			break;
+		}
 	}
 	nt_spin_unlock_irql(&ntoskernel_lock, irql);
 	return drv_obj;
@@ -435,10 +439,9 @@ static void timer_proc(unsigned long data)
 }
 
 void wrap_init_timer(struct nt_timer *nt_timer, enum timer_type type,
-		     struct kdpc *kdpc, struct ndis_miniport_block *nmb)
+		     struct ndis_mp_block *nmb)
 {
 	struct wrap_timer *wrap_timer;
-	KIRQL irql;
 
 	/* TODO: if a timer is initialized more than once, we allocate
 	 * memory for wrap_timer more than once for the same nt_timer,
@@ -468,16 +471,18 @@ void wrap_init_timer(struct nt_timer *nt_timer, enum timer_type type,
 	wrap_timer->wrap_timer_magic = WRAP_TIMER_MAGIC;
 #endif
 	nt_timer->wrap_timer = wrap_timer;
-	nt_timer->kdpc = kdpc;
+	nt_timer->kdpc = NULL;
 	initialize_object(&nt_timer->dh, type, 0);
 	nt_timer->wrap_timer_magic = WRAP_TIMER_MAGIC;
-	irql = nt_spin_lock_irql(&timer_lock, DISPATCH_LEVEL);
-	if (nmb)
-		InsertTailList(&nmb->wnd->wrap_timer_list, &wrap_timer->list);
-	else
-		InsertTailList(&wrap_timer_list, &wrap_timer->list);
-	nt_spin_unlock_irql(&timer_lock, irql);
 	TIMERTRACE("timer %p (%p)", wrap_timer, nt_timer);
+	if (nmb)
+		atomic_insert_list_head(wrap_timer->slist.next,
+					nmb->wnd->wrap_timer_slist.next,
+					&wrap_timer->slist);
+	else
+		atomic_insert_list_head(wrap_timer->slist.next,
+					wrap_timer_slist.next,
+					&wrap_timer->slist);
 	TIMEREXIT(return);
 }
 
@@ -485,14 +490,14 @@ wstdcall void WIN_FUNC(KeInitializeTimerEx,2)
 	(struct nt_timer *nt_timer, enum timer_type type)
 {
 	TIMERENTER("%p", nt_timer);
-	wrap_init_timer(nt_timer, type, NULL, NULL);
+	wrap_init_timer(nt_timer, type, NULL);
 }
 
 wstdcall void WIN_FUNC(KeInitializeTimer,1)
 	(struct nt_timer *nt_timer)
 {
 	TIMERENTER("%p", nt_timer);
-	wrap_init_timer(nt_timer, NotificationTimer, NULL, NULL);
+	wrap_init_timer(nt_timer, NotificationTimer, NULL);
 }
 
 /* expires and repeat are in HZ */
@@ -522,8 +527,7 @@ BOOLEAN wrap_set_timer(struct nt_timer *nt_timer, unsigned long expires_hz,
 	}
 #endif
 	KeClearEvent((struct nt_event *)nt_timer);
-	if (kdpc)
-		nt_timer->kdpc = kdpc;
+	nt_timer->kdpc = kdpc;
 	wrap_timer->repeat = repeat_hz;
 	if (mod_timer(&wrap_timer->timer, jiffies + expires_hz))
 		TIMEREXIT(return TRUE);
@@ -538,7 +542,7 @@ wstdcall BOOLEAN WIN_FUNC(KeSetTimerEx,4)
 	unsigned long expires_hz, repeat_hz;
 
 	TIMERENTER("%p, %Ld, %d", nt_timer, duetime_ticks, period_ms);
-	expires_hz = SYSTEM_TIME_TO_HZ(duetime_ticks) + 1;
+	expires_hz = SYSTEM_TIME_TO_HZ(duetime_ticks);
 	repeat_hz = MSEC_TO_HZ(period_ms);
 	return wrap_set_timer(nt_timer, expires_hz, repeat_hz, kdpc);
 }
@@ -617,10 +621,12 @@ static void kdpc_worker(worker_param_t dummy)
 		nt_spin_unlock_irqrestore(&kdpc_list_lock, flags);
 		if (!kdpc)
 			break;
-		irql = raise_irql(DISPATCH_LEVEL);
 		WORKTRACE("%p, %p, %p, %p, %p", kdpc, kdpc->func, kdpc->ctx,
 			  kdpc->arg1, kdpc->arg2);
+		irql = raise_irql(DISPATCH_LEVEL);
+		assert_irql(_irql_ == DISPATCH_LEVEL);
 		LIN2WIN4(kdpc->func, kdpc, kdpc->ctx, kdpc->arg1, kdpc->arg2);
+		assert_irql(_irql_ == DISPATCH_LEVEL);
 		lower_irql(irql);
 	}
 	WORKEXIT(return);
@@ -809,6 +815,7 @@ wstdcall void *WIN_FUNC(ExAllocatePoolWithTag,3)
 	void *addr;
 
 	ENTER4("pool_type: %d, size: %lu, tag: 0x%x", pool_type, size, tag);
+	assert_irql(_irql_ <= DISPATCH_LEVEL);
 	if (size < PAGE_SIZE)
 		addr = kmalloc(size, irql_gfp());
 	else {
@@ -1127,9 +1134,17 @@ wstdcall NTSTATUS WIN_FUNC(KeWaitForMultipleObjects,8)
 	if (timeout == NULL)
 		wait_hz = 0;
 	else
-		wait_hz = SYSTEM_TIME_TO_HZ(*timeout) + 1;
+		wait_hz = SYSTEM_TIME_TO_HZ(*timeout);
 
-	assert(current_irql() < DISPATCH_LEVEL);
+	DBG_BLOCK(2) {
+		KIRQL irql = current_irql();
+		if (irql >= DISPATCH_LEVEL) {
+			TRACE2("wait in atomic context: %Lu, %lu, %d, %ld, %x",
+			       *timeout, wait_hz, in_atomic(), in_interrupt(),
+			       preempt_count());
+		}
+	}
+	assert_irql(_irql_ < DISPATCH_LEVEL);
 	EVENTTRACE("%p: sleep for %ld on %p", current, wait_hz, &wait_done);
 	/* we don't honor 'alertable' - according to decription for
 	 * this, even if waiting in non-alertable state, thread may be
@@ -1350,7 +1365,7 @@ wstdcall NTSTATUS WIN_FUNC(KeDelayExecutionThread,3)
 	if (wait_mode != 0)
 		ERROR("invalid wait_mode %d", wait_mode);
 
-	timeout = SYSTEM_TIME_TO_HZ(*interval) + 1;
+	timeout = SYSTEM_TIME_TO_HZ(*interval);
 	EVENTTRACE("%p, %Ld, %ld", current, *interval, timeout);
 	if (timeout <= 0)
 		EVENTEXIT(return STATUS_SUCCESS);
@@ -1504,15 +1519,21 @@ wstdcall KPRIORITY WIN_FUNC(KeQueryPriorityThread,1)
 	struct task_struct *task;
 
 	TRACE2("%p", thread);
+#ifdef CONFIG_X86_64
 	/* sis163u driver for amd64 passes 0x1f from thread created by
 	 * PsCreateSystemThread - no idea what is 0x1f */
 	if (thread == (void *)0x1f)
 		thread = get_current_nt_thread();
-	if (!thread)
+#endif
+	if (!thread) {
+		TRACE2("invalid thread");
 		EXIT2(return LOW_REALTIME_PRIORITY);
+	}
 	task = get_nt_thread_task(thread);
-	if (!task)
+	if (!task) {
+		TRACE2("couldn't find task for thread: %p", thread);
 		EXIT2(return LOW_REALTIME_PRIORITY);
+	}
 
 	if (thread_priority(thread->task) <= 0)
 		prio = LOW_PRIORITY;
@@ -1532,13 +1553,19 @@ wstdcall KPRIORITY WIN_FUNC(KeSetPriorityThread,2)
 	struct task_struct *task;
 
 	TRACE2("thread: %p, priority = %u", thread, prio);
+#ifdef CONFIG_X86_64
 	if (thread == (void *)0x1f)
 		thread = get_current_nt_thread();
-	if (!thread)
+#endif
+	if (!thread) {
+		TRACE2("invalid thread");
 		EXIT2(return LOW_REALTIME_PRIORITY);
+	}
 	task = get_nt_thread_task(thread);
-	if (!task)
+	if (!task) {
+		TRACE2("couldn't find task for thread: %p", thread);
 		EXIT2(return LOW_REALTIME_PRIORITY);
+	}
 
 	if (thread_priority(task) <= 0)
 		old_prio = LOW_PRIORITY;
@@ -1558,77 +1585,78 @@ wstdcall KPRIORITY WIN_FUNC(KeSetPriorityThread,2)
 	return old_prio;
 }
 
-struct thread_trampoline_info {
+struct thread_trampoline {
 	void (*func)(void *) wstdcall;
 	void *ctx;
 	struct nt_thread *thread;
 	struct completion started;
 };
 
-static int thread_trampoline(void *data)
+static int ntdriver_thread(void *data)
 {
-	struct thread_trampoline_info *thread_info = data;
+	struct thread_trampoline *thread_tramp = data;
+	/* yes, a tramp! */
+	typeof(thread_tramp->func) func = thread_tramp->func;
+	typeof(thread_tramp->ctx) ctx = thread_tramp->ctx;
 
-	thread_info->thread->task = current;
-	thread_info->thread->pid = current->pid;
-	TRACE2("thread: %p, task: %p (%d)", thread_info->thread,
+	thread_tramp->thread->task = current;
+	thread_tramp->thread->pid = current->pid;
+	TRACE2("thread: %p, task: %p (%d)", thread_tramp->thread,
 	       current, current->pid);
-	complete(&thread_info->started);
+	complete(&thread_tramp->started);
 
 #ifdef PF_NOFREEZE
 	current->flags |= PF_NOFREEZE;
 #endif
-	strncpy(current->comm, "windisdrvr", sizeof(current->comm));
+	strncpy(current->comm, "ntdriver", sizeof(current->comm));
 	current->comm[sizeof(current->comm)-1] = 0;
-	LIN2WIN1(thread_info->func, thread_info->ctx);
+	LIN2WIN1(func, ctx);
 	ERROR("task: %p", current);
 	return 0;
 }
 
 wstdcall NTSTATUS WIN_FUNC(PsCreateSystemThread,7)
-	(void **phandle, ULONG access, void *obj_attr, void *process,
+	(void **handle, ULONG access, void *obj_attr, void *process,
 	 void *client_id, void (*func)(void *) wstdcall, void *ctx)
 {
-	struct nt_thread *thread;
-	struct thread_trampoline_info thread_info;
-	no_warn_unused struct task_struct *task;
-	no_warn_unused int pid;
+	struct thread_trampoline thread_tramp;
 
-	ENTER2("phandle = %p, access = %u, obj_attr = %p, process = %p, "
-	       "client_id = %p, func = %p, context = %p", phandle, access,
+	ENTER2("handle = %p, access = %u, obj_attr = %p, process = %p, "
+	       "client_id = %p, func = %p, context = %p", handle, access,
 	       obj_attr, process, client_id, func, ctx);
 
-	thread = create_nt_thread(NULL);
-	if (!thread) {
+	thread_tramp.thread = create_nt_thread(NULL);
+	if (!thread_tramp.thread) {
 		ERROR("couldn't allocate thread object");
 		EXIT2(return STATUS_RESOURCES);
 	}
-	TRACE2("thread: %p", thread);
-	thread_info.thread = thread;
-	thread_info.func = func;
-	thread_info.ctx = ctx;
-	init_completion(&thread_info.started);
+	TRACE2("thread: %p", thread_tramp.thread);
+	thread_tramp.func = func;
+	thread_tramp.ctx = ctx;
+	init_completion(&thread_tramp.started);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,7)
-	pid = kernel_thread(thread_trampoline, &thread_info, CLONE_SIGHAND);
-	TRACE2("pid = %d", pid);
-	if (pid < 0) {
-		free_object(thread_info.thread);
+	thread_tramp.thread->pid = kernel_thread(ntdriver_thread, &thread_tramp,
+						 CLONE_SIGHAND);
+	TRACE2("pid = %d", thread_tramp.thread->pid);
+	if (thread_tramp.thread->pid < 0) {
+		free_object(thread_tramp.thread);
 		EXIT2(return STATUS_FAILURE);
 	}
-	TRACE2("created task: %d", pid);
+	TRACE2("created task: %d", thread_tramp.thread->pid);
 #else
-	task = kthread_run(thread_trampoline, &thread_info, "windisdrvr");
-	if (IS_ERR(task)) {
-		free_object(thread_info.thread);
+	thread_tramp.thread->task = kthread_run(ntdriver_thread,
+						&thread_tramp, "ntdriver");
+	if (IS_ERR(thread_tramp.thread->task)) {
+		free_object(thread_tramp.thread);
 		EXIT2(return STATUS_FAILURE);
 	}
-	TRACE2("created task: %p (%d)", task, task->pid);
+	TRACE2("created task: %p", thread_tramp.thread->task);
 #endif
 
-	wait_for_completion(&thread_info.started);
-	*phandle = OBJECT_TO_HEADER(thread_info.thread);
-	TRACE2("created thread: %p, %p", thread_info.thread, *phandle);
+	wait_for_completion(&thread_tramp.started);
+	*handle = OBJECT_TO_HEADER(thread_tramp.thread);
+	TRACE2("created thread: %p, %p", thread_tramp.thread, *handle);
 	EXIT2(return STATUS_SUCCESS);
 }
 
@@ -1640,27 +1668,27 @@ wstdcall NTSTATUS WIN_FUNC(PsTerminateSystemThread,1)
 	TRACE2("%p, %08X", current, status);
 	thread = get_current_nt_thread();
 	TRACE2("%p", thread);
-	if (!thread) {
+	if (thread) {
+		KeSetEvent((struct nt_event *)&thread->dh, 0, FALSE);
+		while (1) {
+			struct nt_list *ent;
+			struct irp *irp;
+			KIRQL irql;
+			irql = nt_spin_lock_irql(&thread->lock, DISPATCH_LEVEL);
+			ent = RemoveHeadList(&thread->irps);
+			nt_spin_unlock_irql(&thread->lock, irql);
+			if (!ent)
+				break;
+			irp = container_of(ent, struct irp, thread_list);
+			IOTRACE("%p", irp);
+			IoCancelIrp(irp);
+		}
+		/* the driver may later query this status with
+		 * ZwQueryInformationThread */
+		thread->status = status;
+	} else
 		ERROR("couldn't find thread for task: %p", current);
-		return STATUS_FAILURE;
-	}
-	KeSetEvent((struct nt_event *)&thread->dh, 0, FALSE);
-	while (1) {
-		struct nt_list *ent;
-		struct irp *irp;
-		KIRQL irql;
-		irql = nt_spin_lock_irql(&thread->lock, DISPATCH_LEVEL);
-		ent = RemoveHeadList(&thread->irps);
-		nt_spin_unlock_irql(&thread->lock, irql);
-		if (!ent)
-			break;
-		irp = container_of(ent, struct irp, thread_list);
-		IOTRACE("%p", irp);
-		IoCancelIrp(irp);
-	}
-	/* the driver may later query this status with
-	 * ZwQueryInformationThread */
-	thread->status = status;
+
 	complete_and_exit(NULL, status);
 	ERROR("oops: %p, %d", thread->task, thread->pid);
 	return STATUS_FAILURE;
@@ -2519,8 +2547,7 @@ int ntoskernel_init(void)
 
 	initialize_work(&kdpc_work, kdpc_worker, NULL);
 	initialize_work(&ntos_work, ntos_work_worker, NULL);
-	nt_spin_lock_init(&timer_lock);
-	InitializeListHead(&wrap_timer_list);
+	wrap_timer_slist.next = NULL;
 
 	do_gettimeofday(&now);
 	wrap_ticks_to_boot = TICKS_1601_TO_1970;
@@ -2530,10 +2557,18 @@ int ntoskernel_init(void)
 	TRACE2("%Lu", wrap_ticks_to_boot);
 #ifdef WARP_PREEMPT
 	warp_preempt_count = 0;
+#elif defined(CONFIG_PREEMPT_RT)
+	do {
+		int i;
+		for (i = 0; i < NR_CPUS; i++) {
+			spin_lock_init(&per_cpu(warp_preempt_lock, i));
+			per_cpu(warp_preempt_count, i) = 0;
+		}
+	} while (0);
 #endif
 
-#ifdef USE_NTOS_WQ
-	ntos_wq = create_singlethread_workqueue("ntos_wq");
+#ifdef NTOS_WQ
+	ntos_wq = create_workqueue("ntos_wq");
 	if (!ntos_wq) {
 		WARNING("couldn't create ntos_wq thread");
 		return -ENOMEM;
@@ -2597,14 +2632,14 @@ void ntoskernel_exit(void)
 	TRACE2("freeing timers");
 	while (1) {
 		struct wrap_timer *wrap_timer;
-		KIRQL irql;
+		struct nt_slist *slist;
 
-		irql = nt_spin_lock_irql(&timer_lock, DISPATCH_LEVEL);
-		cur = RemoveTailList(&wrap_timer_list);
-		nt_spin_unlock_irql(&timer_lock, irql);
-		if (!cur)
+		slist = atomic_remove_list_head(wrap_timer_slist.next,
+						oldhead->next);
+		TIMERTRACE("%p", slist);
+		if (!slist)
 			break;
-		wrap_timer = container_of(cur, struct wrap_timer, list);
+		wrap_timer = container_of(slist, struct wrap_timer, slist);
 		if (del_timer_sync(&wrap_timer->timer))
 			WARNING("Buggy Windows driver left timer %p running",
 				wrap_timer->nt_timer);
@@ -2658,7 +2693,7 @@ void ntoskernel_exit(void)
 #if defined(CONFIG_X86_64)
 	del_timer_sync(&shared_data_timer);
 #endif
-#ifdef USE_NTOS_WQ
+#ifdef NTOS_WQ
 	if (ntos_wq)
 		destroy_workqueue(ntos_wq);
 #endif

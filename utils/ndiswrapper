@@ -95,10 +95,7 @@ if ($ARGV[0] eq "-i" and @ARGV == 2) {
 } elsif ($ARGV[0] eq "-m" and @ARGV == 1) {
     $res = add_module_alias();
 } elsif ($ARGV[0] eq "-v" and @ARGV == 1) {
-    printf "utils "; system("loadndisdriver -v");
-    printf "driver ";
-    system("modinfo ndiswrapper | grep -E '^(version|vermagic|filename)'");
-    $res = 0;
+    $res = check_version();
 } elsif ($ARGV[0] eq "-ma" and @ARGV == 1) {
     $res = generate_module_device_map(0);
 } elsif ($ARGV[0] eq "-mi" and @ARGV == 1) {
@@ -135,6 +132,45 @@ sub remove_driver {
 sub abort {
     remove_driver($driver_name);
     exit 1;
+}
+
+sub check_version {
+    my ($utils_version, $drv_utils_version, $res);
+    $res = 0;
+    $utils_version = `loadndisdriver -v`;
+    chomp($utils_version);
+    $utils_version =~ s/^version: //;
+    if (length($utils_version) eq 0) {
+	printf "utils version is too old!\n";
+	$res = -1;
+    }
+    $drv_utils_version = 0;
+    open(MODINFO, "modinfo ndiswrapper |");
+    while (my $line = <MODINFO>) {
+	if ($line =~ /utils_version:.*read only:\s([0-9\.]+)/) {
+	    $drv_utils_version = $1;
+	    last;
+	}
+    }
+    if ($drv_utils_version eq 0) {
+	printf "driver version is too old!\n";
+	$res = -1;
+    } elsif ($utils_version ne $drv_utils_version) {
+	printf "utils version '%s' is incompatible with utils version needed" .
+	  " by driver ('%s')!\n", $utils_version, $drv_utils_version;
+	$res = -1;
+    }
+    printf "utils version: '%s', utils version needed by driver: '%s'\n",
+      $utils_version, $drv_utils_version;
+    printf "module details:\n";
+    system("modinfo ndiswrapper | grep -E '^(version|vermagic|filename)'");
+
+    if ($res) {
+	printf "\nYou may need to upgrade driver and/or utils to latest " .
+	  "versions available at\n" .
+	  "http://ndiswrapper.sourceforge.net\n";
+    }
+    return $res;
 }
 
 sub install {
@@ -233,15 +269,16 @@ sub parse_mfr() {
 	    my ($models, @targets) = split(",", $val);
 	    if ($models) {
 		printf DBG "mfr: %s, %s\n", $line, $models;
-		parse_models($models);
+		my $target = choose_target_os(@targets);
+		parse_models($models, $target);
 	    }
 	}
     }
 }
 
 sub parse_models {
-    my $models = shift;
-    my $lines = get_target_os_section($models);
+    my ($models, $target) = @_;
+    my $lines = get_target_os_section($models, $target);
     if (!$lines) {
 	warn "couldn't find models section \"$models\" -\n" .
 	  "installation may be incomplete\n";
@@ -266,14 +303,15 @@ sub parse_models {
 	  parse_hwid($hwid);
 	next if (!$vendor);
 	printf DBG "models: %s, %s, %s\n", $install_section, $hwid, $vendor;
-	parse_install($install_section, $bus_type, $vendor, $device,
+	parse_install($install_section, $target, $bus_type, $vendor, $device,
 		      $subvendor, $subdevice);
     }
 }
 
 sub parse_install {
-    my ($secn, $bus_type, $vendor, $device, $subvendor, $subdevice) = @_;
-    my $lines = get_target_os_section($secn);
+    my ($secn, $target, $bus_type, $vendor, $device,
+	$subvendor, $subdevice) = @_;
+    my $lines = get_target_os_section($secn, $target);
     if (!$lines) {
 	warn "couldn't find install section \"$secn\" -\n" .
 	  "installation may be incomplete\n";
@@ -333,7 +371,6 @@ sub parse_install {
     printf CONF "NdisVersion|0x50001\n";
     printf CONF "Environment|1\n";
     printf CONF "class_guid|%s\n", $classguid;
-    printf CONF "mac_address|XX:XX:XX:XX:XX:XX\n";
     printf CONF "driver_version|%s,%s\n", $providerstring, $version;
     printf CONF "BusType|%s\n", $bus_type;
     printf CONF "SlotNumber|01\n";
@@ -476,26 +513,53 @@ sub parse_key_value {
     }
 }
 
-sub get_target_os_section {
-    my $secn = shift;
+sub choose_target_os {
+    my @targets = @_;
     my $arch = `uname -m`;
     chomp($arch);
+    printf DBG "arch: %s\n", $arch;
     if ($arch =~ /64$/) {
-	$arch = "AMD64";
+	$arch = "NTAMD64";
     } else {
-	$arch = "X86";
+	$arch = "NTX86";
     }
+    printf DBG "arch: %s\n", $arch;
+    foreach my $target (@targets) {
+	$target = trim($target);
+	printf DBG "target: '%s'\n", $target;
+	if ($target =~ /$arch/i) {
+	    return $target;
+	}
+    }
+    return $arch;
+}
+
+sub get_target_os_section {
+    my ($secn, $target) = @_;
+    my $arch = `uname -m`;
+    chomp($arch);
+    printf DBG "arch: %s\n", $arch;
+    if ($arch =~ /64$/) {
+	$arch = ".NTAMD64";
+    } else {
+	$arch = ".NTX86";
+    }
+    printf DBG "arch: %s\n", $arch;
+
     chomp($secn);
     $secn =~ s/^\s*"\s*//;
     $secn =~ s/\s*"\s*$//;
     printf DBG "secn: \"%s\"\n", $secn;
-    $secn =~ s/\.NT($arch)?(\.5\.1)?$//;
+    $secn =~ s/($arch)?(\.[0-9]\.[0-9])?$//;
     printf DBG "secn: \"%s\"\n", $secn;
 
-    my $lines = get_section($secn . ".NT" . $arch . ".5.1");
+    my $lines = get_section($secn . "." . $target);
     return $lines if ($lines);
 
-    $lines = get_section($secn . ".NT" . $arch);
+    $lines = get_section($secn . $arch . ".5.1");
+    return $lines if ($lines);
+
+    $lines = get_section($secn . $arch);
     return $lines if ($lines);
 
     $lines = get_section($secn . ".NT.5.1");

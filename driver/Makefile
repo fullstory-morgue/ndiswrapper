@@ -124,9 +124,13 @@ CFLAGS += $(shell if grep -s -A1 'ndiswrapper' $(KSRC)/kernel/module.c | \
 			echo -DUSE_OWN_WQ; \
 		  fi)
 
-ifdef USE_OWN_WQ
-CFLAGS += -DUSE_OWN_WQ
+ifdef WRAP_WQ
+CFLAGS += -DWRAP_WQ
 OBJS += workqueue.o
+endif
+
+ifdef NTOS_WQ
+CFLAGS += -DNTOS_WQ
 endif
 
 ntoskernel.h: lin2win.h
