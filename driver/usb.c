@@ -138,7 +138,7 @@ static void kill_all_urbs(struct wrap_device *wd, int complete)
 	struct wrap_urb *wrap_urb;
 	KIRQL irql;
 
-	USBENTER("%d", wd->usb.num_alloc_urbs);
+	USBTRACE("%d", wd->usb.num_alloc_urbs);
 	while (1) {
 		IoAcquireCancelSpinLock(&irql);
 		ent = RemoveHeadList(&wd->usb.wrap_urb_list);
@@ -200,7 +200,7 @@ static NTSTATUS nt_urb_irp_status(USBD_STATUS nt_urb_status)
 	case USBD_STATUS_SUCCESS:
 		return STATUS_SUCCESS;
 	case USBD_STATUS_DEVICE_GONE:
-		return STATUS_DEVICE_NOT_CONNECTED;
+		return STATUS_DEVICE_REMOVED;
 	case USBD_STATUS_PENDING:
 		return STATUS_PENDING;
 	case USBD_STATUS_NOT_SUPPORTED:
@@ -473,6 +473,7 @@ static void wrap_urb_complete_worker(worker_param_t dummy)
 	struct wrap_urb *wrap_urb;
 	struct nt_list *ent;
 	unsigned long flags;
+	KIRQL irql;
 
 	USBENTER("");
 	while (1) {
@@ -527,13 +528,13 @@ static void wrap_urb_complete_worker(worker_param_t dummy)
 		case -ECONNRESET:
 			/* urb canceled */
 			irp->io_status.info = 0;
-			TRACE1("urb %p canceled", urb);
+			USBTRACE("urb %p canceled", urb);
 			NT_URB_STATUS(nt_urb) = USBD_STATUS_SUCCESS;
 			irp->io_status.status = STATUS_CANCELLED;
 			break;
 		default:
-			TRACE1("irp: %p, urb: %p, status: %d/%d",
-			       irp, urb, urb->status, wrap_urb->state);
+			USBTRACE("irp: %p, urb: %p, status: %d/%d",
+				 irp, urb, urb->status, wrap_urb->state);
 			irp->io_status.info = 0;
 			NT_URB_STATUS(nt_urb) = wrap_urb_status(urb->status);
 			irp->io_status.status =
@@ -541,7 +542,9 @@ static void wrap_urb_complete_worker(worker_param_t dummy)
 			break;
 		}
 		wrap_free_urb(urb);
+		irql = raise_irql(DISPATCH_LEVEL);
 		IoCompleteRequest(irp, IO_NO_INCREMENT);
+		lower_irql(irql);
 	}
 	USBEXIT(return);
 }
@@ -1097,10 +1100,14 @@ NTSTATUS wrap_submit_irp(struct device_object *pdo, struct irp *irp)
 	USBD_STATUS status;
 	struct usbd_idle_callback *idle_callback;
 
-	USBTRACE("%p, %p", pdo, irp);
+	USBENTER("%p, %p", pdo, irp);
 	wd = pdo->reserved;
-//	if (wd->usb.intf == NULL)
-//		USBEXIT(return STATUS_DEVICE_REMOVED);
+	if (wd->usb.intf == NULL) {
+		USBTRACE("%p", irp);
+		irp->io_status.status = STATUS_DEVICE_REMOVED;
+		irp->io_status.info = 0;
+		USBEXIT(return STATUS_DEVICE_REMOVED);
+	}
 	IRP_WRAP_DEVICE(irp) = wd;
 	irp_sl = IoGetCurrentIrpStackLocation(irp);
 	switch (irp_sl->params.dev_ioctl.code) {

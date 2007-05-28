@@ -72,10 +72,10 @@ struct ndis_phy_addr_unit {
 typedef struct mdl ndis_buffer;
 
 struct ndis_buffer_pool {
-	int max_descr;
-	int num_allocated_descr;
 	ndis_buffer *free_descr;
 	NT_SPIN_LOCK lock;
+	UINT max_descr;
+	UINT num_allocated_descr;
 };
 
 #define NDIS_PROTOCOL_ID_DEFAULT	0x00
@@ -292,13 +292,12 @@ struct ndis_packet_oob_data {
 					(packet)->private.oob_offset)
 
 struct ndis_packet_pool {
+	struct ndis_packet *free_descr;
+	NT_SPIN_LOCK lock;
 	UINT max_descr;
 	UINT num_allocated_descr;
 	UINT num_used_descr;
-	struct ndis_packet *free_descr;
-	NT_SPIN_LOCK lock;
 	UINT proto_rsvd_length;
-	struct nt_list list;
 };
 
 enum ndis_device_pnp_event {
@@ -398,7 +397,7 @@ typedef void (*ndis_isr_handler)(BOOLEAN *recognized, BOOLEAN *queue_handler,
 				 void *handle) wstdcall;
 typedef void (*ndis_interrupt_handler)(void *ctx) wstdcall;
 
-struct miniport_char {
+struct miniport {
 	/* NDIS 3.0 */
 	UCHAR major_version;
 	UCHAR minor_version;
@@ -407,7 +406,7 @@ struct miniport_char {
 	BOOLEAN (*hangcheck)(void *ctx) wstdcall;
 	void (*disable_interrupt)(void *ctx) wstdcall;
 	void (*enable_interrupt)(void *ctx) wstdcall;
-	void (*miniport_halt)(void *ctx) wstdcall;
+	void (*mp_halt)(void *ctx) wstdcall;
 	ndis_interrupt_handler handle_interrupt;
 	NDIS_STATUS (*init)(NDIS_STATUS *error_status, UINT *medium_index,
 			    enum ndis_medium medium[], UINT medium_array_size,
@@ -473,7 +472,7 @@ struct ndis_rw_lock {
 	union {
 		union ndis_rw_lock_refcount ref_count[MAXIMUM_PROCESSORS];
 		/* ndiswrapper specific */
-		volatile int count;
+		int count;
 	};
 };
 
@@ -501,7 +500,7 @@ struct alloc_shared_mem {
 	BOOLEAN cached;
 };
 
-struct ndis_miniport_block;
+struct ndis_mp_block;
 
 /* this is opaque to drivers, so we can use it as we please */
 struct ndis_mp_interrupt {
@@ -515,7 +514,7 @@ struct ndis_mp_interrupt {
 	ndis_isr_handler isr;
 	ndis_interrupt_handler mp_dpc;
 	struct kdpc intr_dpc;
-	struct ndis_miniport_block *nmb;
+	struct ndis_mp_block *nmb;
 	UCHAR dpc_count;
 	BOOLEAN enable;
 	struct nt_event dpc_completed_event;
@@ -544,7 +543,7 @@ struct ndis_configuration_parameter {
 };
 
 struct wrap_ndis_driver {
-	struct miniport_char miniport;
+	struct miniport mp;
 };
 
 /* IDs used to store extensions in driver_object's custom extension */
@@ -676,13 +675,13 @@ struct ndis_timer {
 	struct kdpc kdpc;
 };
 
-struct ndis_miniport_timer {
+struct ndis_mp_timer {
 	struct nt_timer nt_timer;
 	struct kdpc kdpc;
 	DPC func;
 	void *ctx;
-	struct ndis_miniport_block *nmb;
-	struct ndis_miniport_timer *next;
+	struct ndis_mp_block *nmb;
+	struct ndis_mp_timer *next;
 };
 
 typedef struct cm_partial_resource_list NDIS_RESOURCE_LIST;
@@ -730,9 +729,9 @@ enum driver_type { DRIVER_WIRELESS = 1, DRIVER_ETHERNET, };
  * directly via macros, so it's important that they are at the correct
  * position.
  */
-struct ndis_miniport_block {
+struct ndis_mp_block {
 	void *signature;
-	struct ndis_miniport_block *next;
+	struct ndis_mp_block *next;
 	struct driver_object *drv_obj;
 	void *mp_ctx;
 	struct unicode_string name;
@@ -746,7 +745,7 @@ struct ndis_miniport_block {
 	UCHAR assigned_cpu;
 	NT_SPIN_LOCK lock;
 	enum ndis_request_type *mediarequest;
-	struct ndis_miniport_interrupt *interrupt;
+	struct ndis_mp_interrupt *interrupt;
 	ULONG flags;
 	ULONG pnp_flags;
 	struct nt_list packet_list;
@@ -754,7 +753,7 @@ struct ndis_miniport_block {
 	struct ndis_packet *return_packet_queue;
 	ULONG request_buffer;
 	void *set_mcast_buffer;
-	struct ndis_miniport_block *primary_miniport;
+	struct ndis_mp_block *primary_mp;
 	void *wrapper_ctx;
 	void *bus_data_ctx;
 	ULONG pnp_capa;
@@ -782,7 +781,7 @@ struct ndis_miniport_block {
 	struct device_object *next_device;
 	void *mapreg;
 	void *call_mgraflist;
-	void *miniport_thread;
+	void *mp_thread;
 	void *setinfobuf;
 	USHORT setinfo_buf_len;
 	USHORT max_send_pkts;
@@ -823,7 +822,7 @@ struct ndis_miniport_block {
 };
 
 struct wrap_ndis_device {
-	struct ndis_miniport_block *nmb;
+	struct ndis_mp_block *nmb;
 	struct wrap_device *wd;
 	struct net_device *net_dev;
 	void *shutdown_ctx;
@@ -846,10 +845,10 @@ struct wrap_ndis_device {
 	struct semaphore tx_ring_mutex;
 	unsigned int max_tx_packets;
 	u8 tx_ok;
-	struct semaphore ndis_comm_mutex;
-	struct task_struct *ndis_comm_task;
-	s8 ndis_comm_done;
-	NDIS_STATUS ndis_comm_status;
+	struct semaphore ndis_req_mutex;
+	struct task_struct *ndis_req_task;
+	s8 ndis_req_done;
+	NDIS_STATUS ndis_req_status;
 	ULONG packet_filter;
 
 	ULONG sg_dma_size;
@@ -888,7 +887,7 @@ struct wrap_ndis_device {
 	struct v4_checksum tx_csum;
 	enum ndis_physical_medium physical_medium;
 	ULONG ndis_wolopts;
-	struct nt_list wrap_timer_list;
+	struct nt_slist wrap_timer_slist;
 	char netdev_name[IFNAMSIZ];
 	int drv_ndis_version;
 	struct ndis_pnp_capabilities pnp_capa;
@@ -931,39 +930,39 @@ void NdisAllocateBuffer(NDIS_STATUS *status, ndis_buffer **buffer,
 			struct ndis_buffer_pool *pool, void *virt,
 			UINT length) wstdcall;
 void NdisFreeBuffer(ndis_buffer *descr) wstdcall;
-void NdisMIndicateReceivePacket(struct ndis_miniport_block *nmb,
+void NdisMIndicateReceivePacket(struct ndis_mp_block *nmb,
 				struct ndis_packet **packets,
 				UINT nr_packets) wstdcall;
-void NdisMSendComplete(struct ndis_miniport_block *nmb,
-		       struct ndis_packet *packet, NDIS_STATUS status) wstdcall;
-void NdisMSendResourcesAvailable(struct ndis_miniport_block *nmb) wstdcall;
-void NdisMIndicateStatus(struct ndis_miniport_block *nmb,
+void NdisMSendComplete(struct ndis_mp_block *nmb, struct ndis_packet *packet,
+		       NDIS_STATUS status) wstdcall;
+void NdisMSendResourcesAvailable(struct ndis_mp_block *nmb) wstdcall;
+void NdisMIndicateStatus(struct ndis_mp_block *nmb,
 			 NDIS_STATUS status, void *buf, UINT len) wstdcall;
-void NdisMIndicateStatusComplete(struct ndis_miniport_block *nmb) wstdcall;
-void NdisMQueryInformationComplete(struct ndis_miniport_block *nmb,
+void NdisMIndicateStatusComplete(struct ndis_mp_block *nmb) wstdcall;
+void NdisMQueryInformationComplete(struct ndis_mp_block *nmb,
 				   NDIS_STATUS status) wstdcall;
-void NdisMSetInformationComplete(struct ndis_miniport_block *nmb,
+void NdisMSetInformationComplete(struct ndis_mp_block *nmb,
 				 NDIS_STATUS status) wstdcall;
-void NdisMResetComplete(struct ndis_miniport_block *nmb,
-			NDIS_STATUS status, BOOLEAN address_reset) wstdcall;
+void NdisMResetComplete(struct ndis_mp_block *nmb, NDIS_STATUS status,
+			BOOLEAN address_reset) wstdcall;
 ULONG NDIS_BUFFER_TO_SPAN_PAGES(ndis_buffer *buffer) wstdcall;
 BOOLEAN NdisWaitEvent(struct ndis_event *event, UINT timeout) wstdcall;
 void NdisSetEvent(struct ndis_event *event) wstdcall;
 void NdisMDeregisterInterrupt(struct ndis_mp_interrupt *mp_interrupt) wstdcall;
-void EthRxIndicateHandler(struct ndis_miniport_block *nmb, void *rx_ctx,
+void EthRxIndicateHandler(struct ndis_mp_block *nmb, void *rx_ctx,
 			  char *header1, char *header, UINT header_size,
 			  void *look_ahead, UINT look_ahead_size,
 			  UINT packet_size) wstdcall;
-void EthRxComplete(struct ndis_miniport_block *nmb) wstdcall;
-void NdisMTransferDataComplete(struct ndis_miniport_block *nmb,
+void EthRxComplete(struct ndis_mp_block *nmb) wstdcall;
+void NdisMTransferDataComplete(struct ndis_mp_block *nmb,
 			       struct ndis_packet *packet, NDIS_STATUS status,
 			       UINT bytes_txed) wstdcall;
-void NdisWriteConfiguration(NDIS_STATUS *status, struct ndis_miniport_block *nmb,
+void NdisWriteConfiguration(NDIS_STATUS *status, struct ndis_mp_block *nmb,
 			    struct unicode_string *key,
 			    struct ndis_configuration_parameter *param) wstdcall;
 void NdisReadConfiguration(NDIS_STATUS *status,
 			   struct ndis_configuration_parameter **param,
-			   struct ndis_miniport_block *nmb,
+			   struct ndis_mp_block *nmb,
 			   struct unicode_string *key,
 			   enum ndis_parameter_type type) wstdcall;
 

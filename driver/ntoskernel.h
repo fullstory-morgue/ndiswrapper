@@ -16,11 +16,6 @@
 #ifndef _NTOSKERNEL_H_
 #define _NTOSKERNEL_H_
 
-#ifndef CONFIG_WIRELESS_EXT
-#warning "wirelss devices are not supported by this kernel "\
-	"as CONFIG_WIRELESS_EXT is not enabled"
-#endif
-
 #include <linux/types.h>
 #include <linux/timer.h>
 #include <linux/time.h>
@@ -49,11 +44,14 @@
 #include <linux/if_arp.h>
 #include <linux/rtnetlink.h>
 #include <linux/highmem.h>
+#include <linux/percpu.h>
 
 #include "winnt_types.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,7)
 #include <linux/kthread.h>
+#else
+#include <linux/config.h>
 #endif
 /* Interrupt backwards compatibility stuff */
 #include <linux/interrupt.h>
@@ -100,6 +98,8 @@
 #define UNMAP_SG(dev, sglist, nents, direction)		\
 	pci_unmap_sg(dev, sglist, nents, direction)
 
+#define pci_set_consistent_dma_mask(dev,mask) do { } while (0)
+
 #include <linux/smp_lock.h>
 
 /* RedHat kernels define irqs_disabled this way */
@@ -114,11 +114,19 @@
 
 #endif // LINUX_VERSION_CODE
 
+#if defined(CONFIG_NET_RADIO) && !defined(CONFIG_WIRELESS_EXT)
+#define CONFIG_WIRELESS_EXT
+#endif
+
+#ifndef CONFIG_WIRELESS_EXT
+#warning "wirelss devices are not supported by this kernel"
+#endif
+
 #define prepare_wait_condition(task, var, value)	\
 do {							\
 	var = value;					\
 	task = current;					\
-	mb();						\
+	barrier();					\
 } while (0)
 
 /* Wait in wait_state (e.g., TASK_INTERRUPTIBLE) for condition to
@@ -156,37 +164,54 @@ do {							\
 	ret;							\
 })
 
-#ifdef USE_OWN_WQ
+#ifdef WRAP_WQ
 
-typedef struct {
+struct workqueue_struct;
+
+struct workqueue_thread {
 	spinlock_t lock;
 	struct task_struct *task;
 	struct completion *completion;
 	char name[16];
 	int pid;
 	/* whether any work_structs pending? <0 implies quit */
-	int pending;
+	s8 pending;
 	/* list of work_structs pending */
 	struct list_head work_list;
+};
+
+typedef struct workqueue_struct {
+	u8 singlethread;
+	u8 qon;
+	int num_cpus;
+	struct workqueue_thread threads[0];
 } workqueue_struct_t;
 
 typedef struct {
 	struct list_head list;
 	void (*func)(void *data);
 	void *data;
-	/* whether/on which workqueue scheduled */
-	workqueue_struct_t *workq;
+	/* whether/on which thread scheduled */
+	struct workqueue_thread *thread;
 } work_struct_t;
 
 #define initialize_work(work, pfunc, pdata)			\
 	do {							\
 		(work)->func = (pfunc);				\
 		(work)->data = (pdata);				\
-		(work)->workq = NULL;				\
+		(work)->thread = NULL;				\
 	} while (0)
 
 #undef create_singlethread_workqueue
-#define create_singlethread_workqueue wrap_create_wq
+#define create_singlethread_workqueue(name) wrap_create_wq(name, 1, 0)
+#undef create_workqueue
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,0)
+#define create_workqueue(name) wrap_create_wq(name, 0, 0)
+#else
+#define create_workqueue(name) wrap_create_wq(name, 1, 0)
+#define for_each_online_cpu(cpu) while ((cpu = 0) || 1)
+#define kthread_bind(thread, cpu) do { } while (0)
+#endif
 #undef destroy_workqueue
 #define destroy_workqueue wrap_destroy_wq
 #undef queue_work
@@ -194,15 +219,19 @@ typedef struct {
 #undef flush_workqueue
 #define flush_workqueue wrap_flush_wq
 
-workqueue_struct_t *wrap_create_wq(const char *name);
+workqueue_struct_t *wrap_create_wq(const char *name, u8 singlethread, u8 freeze);
+void wrap_destroy_wq_on(workqueue_struct_t *workq, int cpu);
 void wrap_destroy_wq(workqueue_struct_t *workq);
-void wrap_queue_work(workqueue_struct_t *workq, work_struct_t *work) wfastcall;
+int wrap_queue_work_on(workqueue_struct_t *workq, work_struct_t *work,
+		       int cpu) wfastcall;
+int wrap_queue_work(workqueue_struct_t *workq, work_struct_t *work) wfastcall;
 void wrap_cancel_work(work_struct_t *work);
+void wrap_flush_wq_on(workqueue_struct_t *workq, int cpu);
 void wrap_flush_wq(workqueue_struct_t *workq);
 typedef void *worker_param_t;
 #define worker_param_data(param, type, member) param
 
-#else // USE_OWN_WQ
+#else // WRAP_WQ
 
 typedef struct workqueue_struct workqueue_struct_t;
 typedef struct work_struct work_struct_t;
@@ -218,7 +247,7 @@ typedef void *worker_param_t;
 #define worker_param_data(param, type, member) param
 #endif // INIT_WORK_NAR
 
-#endif // USE_OWN_WQ
+#endif // WRAP_WQ
 
 struct nt_thread *wrap_worker_init(workqueue_struct_t *wq);
 
@@ -361,6 +390,10 @@ typedef u32 pm_message_t;
 #define DMA_30BIT_MASK 0x000000003fffffffULL
 #endif
 
+#ifndef DMA_32BIT_MASK
+#define DMA_32BIT_MASK 0x00000000ffffffffULL
+#endif
+
 #include "ndiswrapper.h"
 #include "pe_linker.h"
 #include "wrapmem.h"
@@ -396,8 +429,8 @@ typedef u32 pm_message_t;
 	((((sys_time) <= 0) ? (((u64)HZ * (-(sys_time))) / TICKSPERSEC) : \
 	  (((s64)HZ * ((sys_time) - ticks_1601())) / TICKSPERSEC)))
 
-#define MSEC_TO_HZ(ms) ((ms) * HZ / 1000)
-#define USEC_TO_HZ(us) ((us) * HZ / 1000000)
+#define MSEC_TO_HZ(ms) (((ms * HZ) + 999) / 1000)
+#define USEC_TO_HZ(us) (((us * HZ) + 999999) / 1000000)
 
 extern u64 wrap_ticks_to_boot;
 
@@ -450,10 +483,10 @@ struct pe_image {
 	IMAGE_OPTIONAL_HEADER *opt_hdr;
 };
 
-struct ndis_miniport_block;
+struct ndis_mp_block;
 
 struct wrap_timer {
-	struct nt_list list;
+	struct nt_slist slist;
 	struct timer_list timer;
 	struct nt_timer *nt_timer;
 	long repeat;
@@ -556,22 +589,25 @@ struct wrap_device {
 	(WRAP_DEVICE(dev_bus) == WRAP_BLUETOOTH_DEVICE1 ||	\
 	 WRAP_DEVICE(dev_bus) == WRAP_BLUETOOTH_DEVICE2)
 
-extern workqueue_struct_t *ndis_wq;
-#define schedule_ndis_work(work_struct) queue_work(ndis_wq, (work_struct))
+#ifdef WRAP_WQ
+#define NTOS_WQ 1
+#endif
 
-extern workqueue_struct_t *wrapndis_wq;
-#define schedule_wrapndis_work(work_struct)	\
-	queue_work(wrapndis_wq, (work_struct))
+#define NTOS_WQ 1
 
-#define USE_NTOS_WQ 1
-
-#ifdef USE_NTOS_WQ
+#ifdef NTOS_WQ
 extern workqueue_struct_t *ntos_wq;
-#define schedule_ntos_work(work_struct) queue_work(ntos_wq, (work_struct))
-#define schedule_work(work_struct) queue_work(ntos_wq, (work_struct))
+#define schedule_ntos_work(work_struct) queue_work(ntos_wq, work_struct)
+#define schedule_work(work_struct) queue_work(ntos_wq, work_struct)
 #else
 #define schedule_ntos_work(work_struct) schedule_work(work_struct)
 #endif
+
+extern workqueue_struct_t *ndis_wq;
+#define schedule_ndis_work(work_struct) queue_work(ndis_wq, work_struct)
+
+extern workqueue_struct_t *wrapndis_wq;
+#define schedule_wrapndis_work(work_struct) queue_work(wrapndis_wq, work_struct)
 
 #define atomic_unary_op(var, size, oper)				\
 do {									\
@@ -619,20 +655,55 @@ do {									\
 
 /* if either PREEMPT is not available or PREEMPT_RT is used, we fake
  * preempt so that the driver gets IRQL as required. When PREEMPT is
- * not available, kernel won't preempt; when CONFIG_PREEMPT_RT is
- * used, if driver raises IRQL to DISPATCH_LEVEL, kernel is free to
- * preempt, but due to RT, we will get our turn quickly and hopefully
- * driver doesn't mind the short delay */
+ * not available, kernel won't preempt unless a sleep function is
+ * called, so we keep track of (fake) preemption with a variable. With
+ * PREEMPT_RT, we allow only one of the ndiswrapper threads to be at
+ * DISPATCH_LEVEL on each cpu - the kernel is free to preempt any of
+ * these threads */
 
-#if defined(CONFIG_PREEMPT_RT) || !defined(inc_preempt_count)
+#if !defined(inc_preempt_count)
 #define WARP_PREEMPT 1
 #endif
 
 #ifdef WARP_PREEMPT
-extern volatile int warp_preempt_count;
+
+extern int warp_preempt_count;
 #define warp_preempt_disable() atomic_inc_var(warp_preempt_count)
 #define warp_preempt_enable() atomic_dec_var(warp_preempt_count)
 #define warp_preempt_enable_no_resched() warp_preempt_enable()
+#define warp_in_atomic() (warp_preempt_count || in_atomic())
+
+#elif defined(CONFIG_PREEMPT_RT)
+
+DECLARE_PER_CPU(int, warp_preempt_count);
+DECLARE_PER_CPU(spinlock_t, warp_preempt_lock);
+#define warp_preempt_disable()						\
+do {									\
+	int count = get_cpu_var(warp_preempt_count)++;			\
+	spinlock_t *lock = &__get_cpu_var(warp_preempt_lock);		\
+	if (count == 0) {						\
+		assert(!spin_is_locked(lock));				\
+		rt_spin_lock(lock);					\
+	}								\
+	put_cpu_var(warp_preempt_count);				\
+} while (0)
+#define warp_preempt_enable()						\
+do {									\
+	int count = --(get_cpu_var(warp_preempt_count));		\
+	spinlock_t *lock = &__get_cpu_var(warp_preempt_lock);		\
+	if (count == 0) {						\
+		assert(spin_is_locked(lock));				\
+		rt_spin_unlock(lock);					\
+	}								\
+	put_cpu_var(warp_preempt_count);				\
+} while (0)
+#define warp_preempt_enable_no_resched() warp_preempt_enable()
+#define warp_in_atomic()						\
+({									\
+	int count = get_cpu_var(warp_preempt_count);			\
+	put_cpu_var(warp_preempt_count);				\
+	count || in_atomic();						\
+})
 
 #elif defined(CONFIG_PREEMPT)
 
@@ -643,14 +714,14 @@ extern volatile int warp_preempt_count;
 #define warp_preempt_disable() preempt_disable()
 #define warp_preempt_enable() preempt_enable()
 #define warp_preempt_enable_no_resched() preempt_enable_no_resched()
-#define warp_preempt_count 0
+#define warp_in_atomic() in_atomic()
 
 #else
 
 #define warp_preempt_disable() inc_preempt_count()
 #define warp_preempt_enable() dec_preempt_count()
 #define warp_preempt_enable_no_resched() warp_preempt_enable()
-#define warp_preempt_count 0
+#define warp_in_atomic() in_atomic()
 
 #endif
 
@@ -658,11 +729,11 @@ static inline KIRQL current_irql(void)
 {
 #ifdef DEBUG_IRQL
 	if (in_irq() || irqs_disabled())
-		EXIT2(return DIRQL);
+		EXIT4(return DIRQL);
 	if (in_interrupt())
-		EXIT2(return SOFT_IRQL);
+		EXIT4(return SOFT_IRQL);
 #endif
-	if (warp_preempt_count || in_atomic())
+	if (warp_in_atomic())
 		EXIT6(return DISPATCH_LEVEL);
 	else
 		EXIT6(return PASSIVE_LEVEL);
@@ -675,7 +746,9 @@ static inline KIRQL raise_irql(KIRQL newirql)
 #ifdef DEBUG_IRQL
 	if (newirql > DISPATCH_LEVEL || irql > newirql) {
 		WARNING("invalid irql: %d, %d", irql, newirql);
-		dump_stack();
+		DBG_BLOCK(4) {
+			dump_stack();
+		}
 	}
 #endif
 	warp_preempt_disable();
@@ -683,19 +756,36 @@ static inline KIRQL raise_irql(KIRQL newirql)
 }
 
 static inline void lower_irql(KIRQL oldirql)
-{
+{									
 #ifdef DEBUG_IRQL
 	KIRQL irql = current_irql();
 	TRACE6("%d, %d", irql, oldirql);
 	if (irql > DISPATCH_LEVEL || oldirql > irql) {
 		WARNING("invalid irql: %d, %d", irql, oldirql);
-		dump_stack();
+		DBG_BLOCK(4) {
+			dump_stack();
+		}
 	}
 #endif
 	warp_preempt_enable();
 }
 
 #define irql_gfp() (in_atomic() ? GFP_ATOMIC : GFP_KERNEL)
+
+#ifdef DEBUG_IRQL
+#define assert_irql(cond)						\
+do {									\
+	KIRQL _irql_ = current_irql();					\
+	if (!(cond)) {							\
+		WARNING("assertion '%s' failed: %d", #cond, _irql_);	\
+		DBG_BLOCK(1) {						\
+			dump_stack();					\
+		}							\
+	}								\
+} while (0)
+#else
+#define assert_irql(cond) do { } while (0)
+#endif
 
 /* Windows spinlocks are of type ULONG_PTR which is not big enough to
  * store Linux spinlocks; so we implement Windows spinlocks using
@@ -749,17 +839,32 @@ static inline void nt_spin_unlock(NT_SPIN_LOCK *lock)
  * handlers), we need to fake preempt so driver thinks it is running
  * at right IRQL */
 
-#ifdef WARP_PREEMPT
+#if defined(WARP_PREEMPT)
+
 #define nt_spin_lock_warp_preempt(lock)		\
 do {						\
-	warp_preempt_disable();			\
+	atomic_inc_var(warp_preempt_count);	\
 	nt_spin_lock(lock);			\
 } while (0)
-
 #define nt_spin_unlock_warp_preempt(lock)	\
 do {						\
 	nt_spin_unlock(lock);			\
-	warp_preempt_enable();			\
+	atomic_dec_var(warp_preempt_count);	\
+} while (0)
+
+#elif defined(CONFIG_PREEMPT_RT)
+
+#define nt_spin_lock_warp_preempt(lock)		\
+do {						\
+	get_cpu_var(warp_preempt_count)++;	\
+	put_cpu_var(warp_preempt_count);	\
+	nt_spin_lock(lock);			\
+} while (0)
+#define nt_spin_unlock_warp_preempt(lock)	\
+do {						\
+	nt_spin_unlock(lock);			\
+	get_cpu_var(warp_preempt_count)--;	\
+	put_cpu_var(warp_preempt_count);	\
 } while (0)
 
 #else
@@ -767,6 +872,14 @@ do {						\
 #define nt_spin_lock_warp_preempt(lock) nt_spin_lock(lock)
 #define nt_spin_unlock_warp_preempt(lock) nt_spin_unlock(lock)
 
+#endif
+
+#ifdef CONFIG_PREEMPT_RT
+#define save_local_irq(flags) local_irq_save(flags)
+#define restore_local_irq(flags) local_irq_restore(flags)
+#else
+#define save_local_irq(flags) local_irq_save(flags)
+#define restore_local_irq(flags) local_irq_restore(flags)
 #endif
 
 /* raise IRQL to given (higher) IRQL if necessary before locking */
@@ -798,14 +911,6 @@ static inline void nt_spin_unlock_bh(NT_SPIN_LOCK *lock)
 	local_bh_enable();
 }
 
-#ifdef CONFIG_PREEMPT_RT
-#define save_local_irq(flags) raw_local_irq_save(flags)
-#define restore_local_irq(flags) raw_local_irq_restore(flags)
-#else
-#define save_local_irq(flags) local_irq_save(flags)
-#define restore_local_irq(flags) local_irq_restore(flags)
-#endif
-
 #define nt_spin_lock_irqsave(lock, flags)				\
 do {									\
 	save_local_irq(flags);						\
@@ -816,11 +921,11 @@ do {									\
 #define nt_spin_unlock_irqrestore(lock, flags)				\
 do {									\
 	nt_spin_unlock(lock);						\
+	warp_preempt_enable_no_resched();				\
 	restore_local_irq(flags);					\
-	warp_preempt_enable();						\
 } while (0)
 
-#define atomic_insert_list_head(head, newhead, oldhead)			\
+#define atomic_insert_list_head(oldhead, head, newhead)			\
 do {									\
 	oldhead = (typeof(oldhead))head;				\
 } while (cmpxchg(&(head), oldhead, newhead) != (typeof(head))oldhead)
@@ -967,7 +1072,7 @@ struct nt_thread *get_current_nt_thread(void);
 u64 ticks_1601(void);
 int schedule_ntos_work_item(NTOS_WORK_FUNC func, void *arg1, void *arg2);
 void wrap_init_timer(struct nt_timer *nt_timer, enum timer_type type,
-		     struct kdpc *kdpc, struct ndis_miniport_block *nmb);
+		     struct ndis_mp_block *nmb);
 BOOLEAN wrap_set_timer(struct nt_timer *nt_timer, unsigned long expires_hz,
 		       unsigned long repeat_hz, struct kdpc *kdpc);
 
