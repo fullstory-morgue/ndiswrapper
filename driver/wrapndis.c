@@ -27,10 +27,8 @@
 extern char *if_name;
 extern int hangcheck_interval;
 extern struct iw_handler_def ndis_handler_def;
-extern NT_SPIN_LOCK timer_lock;
+extern NT_SPIN_LOCK ntoskernel_lock;
 
-/* use own workqueue instead of shared one, to avoid depriving
- * others */
 workqueue_struct_t *wrapndis_wq;
 static struct nt_thread *wrapndis_worker_thread;
 
@@ -319,9 +317,12 @@ static void mp_halt(struct wrap_ndis_device *wnd)
 	while (1) {
 		struct nt_slist *slist;
 		struct wrap_timer *wrap_timer;
+		KIRQL irql;
 
-		slist = atomic_remove_list_head(wnd->wrap_timer_slist.next,
-						oldhead->next);
+		irql = nt_spin_lock_irql(&ntoskernel_lock, DISPATCH_LEVEL);
+		if ((slist = wnd->wrap_timer_slist.next))
+			wnd->wrap_timer_slist.next = slist->next;
+		nt_spin_unlock_irql(&ntoskernel_lock, irql);
 		TIMERTRACE("%p", slist);
 		if (!slist)
 			break;
@@ -541,8 +542,6 @@ static struct ndis_packet *alloc_tx_packet(struct wrap_ndis_device *wnd,
 	NdisAllocatePacket(&status, &packet, wnd->tx_packet_pool);
 	if (status != NDIS_STATUS_SUCCESS)
 		return NULL;
-	/* TODO: should a buffer be mapped even if driver supports
-	 * scatter/gather? */
 	NdisAllocateBuffer(&status, &buffer, wnd->tx_buffer_pool,
 			   skb->data, skb->len);
 	if (status != NDIS_STATUS_SUCCESS) {
@@ -583,7 +582,7 @@ static struct ndis_packet *alloc_tx_packet(struct wrap_ndis_device *wnd,
 	DBG_BLOCK(4) {
 		dump_bytes(__FUNCTION__, skb->data, skb->len);
 	}
-	TRACE3("packet: %p, buffer: %p, skb: %p", packet, buffer, skb);
+	TRACE4("%p, %p, %p", packet, buffer, skb);
 	return packet;
 }
 
@@ -592,9 +591,14 @@ void free_tx_packet(struct wrap_ndis_device *wnd, struct ndis_packet *packet,
 {
 	ndis_buffer *buffer;
 	struct ndis_packet_oob_data *oob_data;
+	struct sk_buff *skb;
 
-	ENTER3("%p, %08X", packet, status);
 	assert_irql(_irql_ <= DISPATCH_LEVEL);
+	assert(packet->private.packet_flags);
+	oob_data = NDIS_PACKET_OOB_DATA(packet);
+	skb = oob_data->tx_skb;
+	buffer = packet->private.buffer_head;
+	TRACE4("%p, %p, %p, %08X", packet, buffer, skb, status);
 	if (status == NDIS_STATUS_SUCCESS) {
 		pre_atomic_add(wnd->net_stats.tx_bytes, packet->private.len);
 		atomic_inc_var(wnd->net_stats.tx_packets);
@@ -602,16 +606,20 @@ void free_tx_packet(struct wrap_ndis_device *wnd, struct ndis_packet *packet,
 		TRACE1("packet dropped: %08X", status);
 		atomic_inc_var(wnd->net_stats.tx_dropped);
 	}
-	oob_data = NDIS_PACKET_OOB_DATA(packet);
 	if (wnd->sg_dma_size)
 		free_tx_sg_list(wnd, oob_data);
-	buffer = packet->private.buffer_head;
 	NdisFreeBuffer(buffer);
-	dev_kfree_skb_any(oob_data->tx_skb);
+	dev_kfree_skb_any(skb);
 	NdisFreePacket(packet);
-	if (netif_queue_stopped(wnd->net_dev))
+	if (netif_queue_stopped(wnd->net_dev) &&
+	    ((packet->private.pool->max_descr -
+	      packet->private.pool->num_used_descr) >=
+	     (wnd->max_tx_packets / 4))) {
+		netif_tx_lock_bh(wnd->net_dev);
 		netif_wake_queue(wnd->net_dev);
-	EXIT3(return);
+		netif_tx_unlock_bh(wnd->net_dev);
+	}
+	EXIT4(return);
 }
 
 /* MiniportSend and MiniportSendPackets */
@@ -624,6 +632,7 @@ static u8 mp_tx_packets(struct wrap_ndis_device *wnd, u8 start, u8 n)
 	struct miniport *mp;
 	struct ndis_packet *packet;
 	u8 sent;
+	KIRQL irql;
 
 	TRACE3("%d, %d", start, n);
 	mp = &wnd->wd->driver->ndis_driver->mp;
@@ -633,10 +642,10 @@ static u8 mp_tx_packets(struct wrap_ndis_device *wnd, u8 start, u8 n)
 				 &wnd->tx_ring[start], n);
 			sent = n;
 		} else {
-			serialize_lock(wnd);
+			irql = serialize_lock_irql(wnd);
 			LIN2WIN3(mp->send_packets, wnd->nmb->mp_ctx,
 				 &wnd->tx_ring[start], n);
-			serialize_unlock(wnd);
+			serialize_unlock_irql(wnd, irql);
 			for (sent = 0; sent < n && wnd->tx_ok; sent++) {
 				struct ndis_packet_oob_data *oob_data;
 				packet = wnd->tx_ring[start + sent];
@@ -678,10 +687,10 @@ static u8 mp_tx_packets(struct wrap_ndis_device *wnd, u8 start, u8 n)
 			packet = wnd->tx_ring[start + sent];
 			oob_data = NDIS_PACKET_OOB_DATA(packet);
 			oob_data->status = NDIS_STATUS_NOT_RECOGNIZED;
-			if_serialize_lock(wnd);
+			irql = serialize_lock_irql(wnd);
 			res = LIN2WIN3(mp->send, wnd->nmb->mp_ctx,
 				       packet, packet->private.flags);
-			if_serialize_unlock(wnd);
+			serialize_unlock_irql(wnd, irql);
 			switch (res) {
 			case NDIS_STATUS_SUCCESS:
 				free_tx_packet(wnd, packet, res);
@@ -711,7 +720,6 @@ static void tx_worker(worker_param_t param)
 {
 	struct wrap_ndis_device *wnd;
 	s8 n;
-	KIRQL irql;
 
 	wnd = worker_param_data(param, struct wrap_ndis_device, tx_work);
 	ENTER3("tx_ok %d", wnd->tx_ok);
@@ -736,15 +744,13 @@ static void tx_worker(worker_param_t param)
 		nt_spin_unlock_bh(&wnd->tx_ring_lock);
 		if (unlikely(n > wnd->max_tx_packets))
 			n = wnd->max_tx_packets;
-		irql = raise_irql(DISPATCH_LEVEL);
 		n = mp_tx_packets(wnd, wnd->tx_ring_start, n);
-		if (n > 0) {
+		if (n) {
 			wnd->net_dev->trans_start = jiffies;
 			wnd->tx_ring_start =
 				(wnd->tx_ring_start + n) % TX_RING_SIZE;
 			wnd->is_tx_ring_full = 0;
 		}
-		lower_irql(irql);
 		up(&wnd->tx_ring_mutex);
 		TRACE3("%d, %d, %d", wnd->tx_ring_start, wnd->tx_ring_end, n);
 	}
@@ -758,8 +764,10 @@ static int tx_skbuff(struct sk_buff *skb, struct net_device *dev)
 
 	packet = alloc_tx_packet(wnd, skb);
 	if (!packet) {
-		TRACE1("couldn't allocate packet");
-		netif_stop_queue(wnd->net_dev);
+		TRACE2("couldn't allocate packet");
+		netif_tx_lock(dev);
+		netif_stop_queue(dev);
+		netif_tx_unlock(dev);
 		return NETDEV_TX_BUSY;
 	}
 	nt_spin_lock(&wnd->tx_ring_lock);
@@ -768,10 +776,12 @@ static int tx_skbuff(struct sk_buff *skb, struct net_device *dev)
 		wnd->tx_ring_end = 0;
 	if (wnd->tx_ring_end == wnd->tx_ring_start) {
 		wnd->is_tx_ring_full = 1;
-		netif_stop_queue(wnd->net_dev);
+		netif_tx_lock(dev);
+		netif_stop_queue(dev);
+		netif_tx_unlock(dev);
 	}
 	nt_spin_unlock(&wnd->tx_ring_lock);
-	TRACE3("ring: %d, %d", wnd->tx_ring_start, wnd->tx_ring_end);
+	TRACE4("ring: %d, %d", wnd->tx_ring_start, wnd->tx_ring_end);
 	schedule_wrapndis_work(&wnd->tx_work);
 	return NETDEV_TX_OK;
 }
@@ -1026,12 +1036,11 @@ static void link_status_handler(struct wrap_ndis_device *wnd)
 		EXIT2(return);
 	}
 
-	ndis_assoc_info = kmalloc(assoc_size, GFP_KERNEL);
+	ndis_assoc_info = kzalloc(assoc_size, GFP_KERNEL);
 	if (!ndis_assoc_info) {
 		ERROR("couldn't allocate memory");
 		EXIT2(return);
 	}
-	memset(ndis_assoc_info, 0, assoc_size);
 	res = mp_query(wnd, OID_802_11_ASSOCIATION_INFORMATION,
 		       ndis_assoc_info, assoc_size);
 	if (res) {
@@ -1899,7 +1908,7 @@ static NDIS_STATUS wrap_ndis_start_device(struct wrap_ndis_device *wnd)
 	}
 	TRACE2("maximum send packets: %d", wnd->max_tx_packets);
 	NdisAllocatePacketPoolEx(&status, &wnd->tx_packet_pool,
-				 wnd->max_tx_packets + 2, 0,
+				 wnd->max_tx_packets, 0,
 				 PROTOCOL_RESERVED_SIZE_IN_PACKET);
 	if (status != NDIS_STATUS_SUCCESS) {
 		ERROR("couldn't allocate packet pool");
