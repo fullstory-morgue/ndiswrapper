@@ -1,10 +1,10 @@
-ndiswrapper (1.45-1) UNRELEASED; urgency=low
+ndiswrapper (1.46-1) unstable; urgency=low
 
   * New upstream release.
   * Tighten regexp in debian/watch so that upstream release candidates are not
     erroneously detected.
 
- -- Kel Modderman <kel@otaku42.de>  Tue, 29 May 2007 12:16:52 +1000
+ -- Kel Modderman <kel@otaku42.de>  Wed, 06 Jun 2007 19:07:38 +1000
 
 ndiswrapper (1.44-1) unstable; urgency=low
 

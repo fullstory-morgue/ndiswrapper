@@ -47,6 +47,7 @@
 #include <linux/percpu.h>
 
 #include "winnt_types.h"
+#include "compat.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,7)
 #include <linux/kthread.h>
@@ -97,8 +98,6 @@
 	pci_map_sg(dev, sglist, nents, direction)
 #define UNMAP_SG(dev, sglist, nents, direction)		\
 	pci_unmap_sg(dev, sglist, nents, direction)
-
-#define pci_set_consistent_dma_mask(dev,mask) do { } while (0)
 
 #include <linux/smp_lock.h>
 
@@ -924,22 +923,6 @@ do {									\
 	warp_preempt_enable_no_resched();				\
 	restore_local_irq(flags);					\
 } while (0)
-
-#define atomic_insert_list_head(oldhead, head, newhead)			\
-do {									\
-	oldhead = (typeof(oldhead))head;				\
-} while (cmpxchg(&(head), oldhead, newhead) != (typeof(head))oldhead)
-
-#define atomic_remove_list_head(head, newhead)				\
-({									\
-	typeof(head) oldhead;						\
-	do {								\
-		oldhead = head;						\
-		if (!oldhead)						\
-			break;						\
-	} while (cmpxchg(&(head), oldhead, newhead) != oldhead);	\
-	oldhead;							\
-})
 
 static inline ULONG SPAN_PAGES(void *ptr, SIZE_T length)
 {

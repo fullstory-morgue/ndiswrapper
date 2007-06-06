@@ -18,6 +18,8 @@
 
 #include "ntoskernel.h"
 
+//#define ALLOW_POOL_OVERFLOW 1
+
 #define NDIS_DMA_24BITS 0
 #define NDIS_DMA_32BITS 1
 #define NDIS_DMA_64BITS 2
@@ -203,6 +205,17 @@ struct ndis_task_tcp_large_send {
 	BOOLEAN ip_opts;
 };
 
+struct ndis_packet;
+
+struct ndis_packet_pool {
+	struct ndis_packet *free_descr;
+	NT_SPIN_LOCK lock;
+	UINT max_descr;
+	UINT num_allocated_descr;
+	UINT num_used_descr;
+	UINT proto_rsvd_length;
+};
+
 struct ndis_packet_stack {
 	ULONG_PTR IM_reserved[2];
 	ULONG_PTR ndis_reserved[4];
@@ -224,7 +237,7 @@ struct ndis_packet_private {
 	UINT len;
 	ndis_buffer *buffer_head;
 	ndis_buffer *buffer_tail;
-	void *pool;
+	struct ndis_packet_pool *pool;
 	UINT count;
 	ULONG flags;
 	BOOLEAN valid_counts;
@@ -290,15 +303,6 @@ struct ndis_packet_oob_data {
 #define NDIS_PACKET_OOB_DATA(packet)					\
 	(struct ndis_packet_oob_data *)(((void *)(packet)) +		\
 					(packet)->private.oob_offset)
-
-struct ndis_packet_pool {
-	struct ndis_packet *free_descr;
-	NT_SPIN_LOCK lock;
-	UINT max_descr;
-	UINT num_allocated_descr;
-	UINT num_used_descr;
-	UINT proto_rsvd_length;
-};
 
 enum ndis_device_pnp_event {
 	NdisDevicePnPEventQueryRemoved, NdisDevicePnPEventRemoved,
@@ -505,7 +509,6 @@ struct ndis_mp_block;
 /* this is opaque to drivers, so we can use it as we please */
 struct ndis_mp_interrupt {
 	struct kinterrupt *kinterrupt;
-	/* Taken by ISR, DisableInterrupt and SynchronizeWithInterrupt */
 	NT_SPIN_LOCK lock;
 	union {
 		void *reserved;
@@ -841,13 +844,13 @@ struct wrap_ndis_device {
 	u8 tx_ring_start;
 	u8 tx_ring_end;
 	u8 is_tx_ring_full;
+	u8 tx_ok;
 	NT_SPIN_LOCK tx_ring_lock;
 	struct semaphore tx_ring_mutex;
 	unsigned int max_tx_packets;
-	u8 tx_ok;
 	struct semaphore ndis_req_mutex;
 	struct task_struct *ndis_req_task;
-	s8 ndis_req_done;
+	int ndis_req_done;
 	NDIS_STATUS ndis_req_status;
 	ULONG packet_filter;
 
@@ -888,9 +891,9 @@ struct wrap_ndis_device {
 	enum ndis_physical_medium physical_medium;
 	ULONG ndis_wolopts;
 	struct nt_slist wrap_timer_slist;
-	char netdev_name[IFNAMSIZ];
 	int drv_ndis_version;
 	struct ndis_pnp_capabilities pnp_capa;
+	char netdev_name[IFNAMSIZ];
 };
 
 struct ndis_pmkid_candidate {
