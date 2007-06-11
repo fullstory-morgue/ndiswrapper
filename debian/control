@@ -28,7 +28,7 @@ Package: ndiswrapper-utils-1.9
 Architecture: i386 amd64
 Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}, ndiswrapper-common
 Suggests: ndiswrapper-source
-Description: Userspace utilities for the ndiswrapper linux kernel module
+Description: Userspace utilities for the ndiswrapper Linux kernel module
  Some vendors do not release specifications of the hardware or provide a
  Linux driver for their wireless network cards. This project implements
  Windows kernel API and NDIS (Network Driver Interface Specification) API
@@ -45,7 +45,7 @@ Package: ndiswrapper-source
 Architecture: all
 Depends: module-assistant, debhelper (>= 5.0.37), bzip2, gcc
 Suggests: kernel-package
-Description: Source for the ndiswrapper linux kernel module
+Description: Source for the ndiswrapper Linux kernel module
  Some vendors do not release specifications of the hardware or provide a
  Linux driver for their wireless network cards. This project implements
  Windows kernel API and NDIS (Network Driver Interface Specification) API
@@ -54,6 +54,5 @@ Description: Source for the ndiswrapper linux kernel module
  it is in Windows, without binary emulation.
  .
  This package provides the source code for the ndiswrapper kernel module.
- Kernel source is required to compile this module.
  .
   Homepage: http://ndiswrapper.sourceforge.net/

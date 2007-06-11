@@ -10,7 +10,7 @@ Package: ndiswrapper-modules-_KVERS_
 Architecture: i386 amd64
 Depends: ndiswrapper-utils-1.9
 Recommends: linux-modules-_KVERS_ | linux-image-_KVERS_
-Description: ndiswrapper linux kernel module
+Description: ndiswrapper Linux kernel module
  This package contains the ndiswrapper loadable kernel modules for the
  linux-image-_KVERS_ package.
  .

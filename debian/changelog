@@ -3,8 +3,11 @@ ndiswrapper (1.46-1) unstable; urgency=low
   * New upstream release.
   * Tighten regexp in debian/watch so that upstream release candidates are not
     erroneously detected.
+  * Remove sentence in debian/control that states kernel source is required
+    for compilations (technically, only the headers are) and capitalise the
+    name "Linux". (Closes: #420688)
 
- -- Kel Modderman <kel@otaku42.de>  Wed, 06 Jun 2007 19:07:38 +1000
+ -- Kel Modderman <kel@otaku42.de>  Mon, 11 Jun 2007 20:29:47 +1000
 
 ndiswrapper (1.44-1) unstable; urgency=low
 
