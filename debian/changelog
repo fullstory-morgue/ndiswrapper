@@ -6,8 +6,10 @@ ndiswrapper (1.46-1) unstable; urgency=low
   * Remove sentence in debian/control that states kernel source is required
     for compilations (technically, only the headers are) and capitalise the
     name "Linux". (Closes: #420688)
+  * Use $(PKGNAME) variable in place of ndiswrapper-modules-$(KVERS) in
+    rules.modules install target directory.
 
- -- Kel Modderman <kel@otaku42.de>  Mon, 11 Jun 2007 20:29:47 +1000
+ -- Kel Modderman <kel@otaku42.de>  Mon, 11 Jun 2007 20:37:55 +1000
 
 ndiswrapper (1.44-1) unstable; urgency=low
 
