@@ -103,16 +103,17 @@ NDIS_STATUS mp_request(enum ndis_request_type request,
 	if (!needed)
 		needed = &n;
 	mp = &wnd->wd->driver->ndis_driver->mp;
-	TRACE2("%p, %08X", mp->query, oid);
 	prepare_wait_condition(wnd->ndis_req_task, wnd->ndis_req_done, 0);
 	irql = serialize_lock_irql(wnd);
 	assert_irql(_irql_ == DISPATCH_LEVEL);
 	switch (request) {
 	case NdisRequestQueryInformation:
-		res = LIN2WIN6(mp->query, wnd->nmb->mp_ctx, oid, buf,
+		TRACE2("%p, %08X, %p", mp->queryinfo, oid, wnd->nmb->mp_ctx);
+		res = LIN2WIN6(mp->queryinfo, wnd->nmb->mp_ctx, oid, buf,
 			       buflen, written, needed);
 		break;
 	case NdisRequestSetInformation:
+		TRACE2("%p, %08X, %p", mp->setinfo, oid, wnd->nmb->mp_ctx);
 		res = LIN2WIN6(mp->setinfo, wnd->nmb->mp_ctx, oid, buf,
 			       buflen, written, needed);
 		break;
@@ -122,7 +123,6 @@ NDIS_STATUS mp_request(enum ndis_request_type request,
 		break;
 	}
 	serialize_unlock_irql(wnd, irql);
-
 	TRACE2("%08X, %08X", res, oid);
 	if (res == NDIS_STATUS_PENDING) {
 		/* wait for NdisMQueryInformationComplete */
@@ -140,51 +140,6 @@ NDIS_STATUS mp_request(enum ndis_request_type request,
 			       *needed);
 	}
 	EXIT3(return res);
-}
-
-/* MiniportQueryInformation */
-NDIS_STATUS mp_query_info(struct wrap_ndis_device *wnd, ndis_oid oid,
-			  void *buf, ULONG buflen, ULONG *written,
-			  ULONG *needed)
-{
-	return mp_request(NdisRequestQueryInformation, wnd, oid,
-			  buf, buflen, written, needed);
-}
-
-/* MiniportSetInformation */
-NDIS_STATUS mp_set_info(struct wrap_ndis_device *wnd, ndis_oid oid,
-			void *buf, ULONG buflen, ULONG *written,
-			ULONG *needed)
-{
-	return mp_request(NdisRequestSetInformation, wnd, oid,
-			  buf, buflen, written, needed);
-}
-
-NDIS_STATUS mp_query(struct wrap_ndis_device *wnd, ndis_oid oid,
-		     void *buf, ULONG buflen)
-{
-	return mp_request(NdisRequestQueryInformation, wnd, oid,
-			  buf, buflen, NULL, NULL);
-}
-
-NDIS_STATUS mp_query_int(struct wrap_ndis_device *wnd, ndis_oid oid,
-			 ULONG *data)
-{
-	return mp_request(NdisRequestQueryInformation, wnd, oid,
-			  data, sizeof(ULONG), NULL, NULL);
-}
-
-NDIS_STATUS mp_set(struct wrap_ndis_device *wnd, ndis_oid oid, void *buf,
-		   ULONG buflen)
-{
-	return mp_request(NdisRequestSetInformation, wnd, oid,
-			  buf, buflen, NULL, NULL);
-}
-
-NDIS_STATUS mp_set_int(struct wrap_ndis_device *wnd, ndis_oid oid, ULONG data)
-{
-	return mp_request(NdisRequestSetInformation, wnd, oid,
-			  &data, sizeof(ULONG), NULL, NULL);
 }
 
 /* MiniportPnPEventNotify */
@@ -592,6 +547,7 @@ void free_tx_packet(struct wrap_ndis_device *wnd, struct ndis_packet *packet,
 	ndis_buffer *buffer;
 	struct ndis_packet_oob_data *oob_data;
 	struct sk_buff *skb;
+	struct ndis_packet_pool *pool;
 
 	assert_irql(_irql_ <= DISPATCH_LEVEL);
 	assert(packet->private.packet_flags);
@@ -610,10 +566,10 @@ void free_tx_packet(struct wrap_ndis_device *wnd, struct ndis_packet *packet,
 		free_tx_sg_list(wnd, oob_data);
 	NdisFreeBuffer(buffer);
 	dev_kfree_skb_any(skb);
+	pool = packet->private.pool;
 	NdisFreePacket(packet);
 	if (netif_queue_stopped(wnd->net_dev) &&
-	    ((packet->private.pool->max_descr -
-	      packet->private.pool->num_used_descr) >=
+	    ((pool->max_descr - pool->num_used_descr) >=
 	     (wnd->max_tx_packets / 4))) {
 		netif_tx_lock_bh(wnd->net_dev);
 		netif_wake_queue(wnd->net_dev);
@@ -775,8 +731,8 @@ static int tx_skbuff(struct sk_buff *skb, struct net_device *dev)
 	if (wnd->tx_ring_end == TX_RING_SIZE)
 		wnd->tx_ring_end = 0;
 	if (wnd->tx_ring_end == wnd->tx_ring_start) {
-		wnd->is_tx_ring_full = 1;
 		netif_tx_lock(dev);
+		wnd->is_tx_ring_full = 1;
 		netif_stop_queue(dev);
 		netif_tx_unlock(dev);
 	}
@@ -1926,8 +1882,7 @@ static NDIS_STATUS wrap_ndis_start_device(struct wrap_ndis_device *wnd)
 	    NDIS_STATUS_SUCCESS && n > ETH_HLEN)
 		ndis_change_mtu(wnd->net_dev, n - ETH_HLEN);
 
-	if (mp_query_int(wnd, OID_GEN_MAC_OPTIONS, &n) ==
-	    NDIS_STATUS_SUCCESS && n > 0)
+	if (mp_query_int(wnd, OID_GEN_MAC_OPTIONS, &n) == NDIS_STATUS_SUCCESS)
 		TRACE2("mac options supported: 0x%x", n);
 
 	tx_header_offset = (typeof(tx_header_offset))buf;
