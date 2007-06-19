@@ -1140,9 +1140,8 @@ wstdcall NTSTATUS WIN_FUNC(KeWaitForMultipleObjects,8)
 	DBG_BLOCK(2) {
 		KIRQL irql = current_irql();
 		if (irql >= DISPATCH_LEVEL) {
-			TRACE2("wait in atomic context: %Lu, %lu, %d, %ld, %x",
-			       *timeout, wait_hz, in_atomic(), in_interrupt(),
-			       preempt_count());
+			TRACE2("wait in atomic context: %Lu, %lu, %d, %ld",
+			       *timeout, wait_hz, in_atomic(), in_interrupt());
 		}
 	}
 	assert_irql(_irql_ < DISPATCH_LEVEL);
@@ -2490,6 +2489,12 @@ void WIN_FUNC(_purecall,0)
 	TODO();
 }
 
+void WIN_FUNC(__chkstk,0)
+	(void)
+{
+	TODO();
+}
+
 #include "ntoskernel_exports.h"
 
 struct worker_init_struct {
@@ -2603,13 +2608,16 @@ int ntoskernel_init(void)
 	init_timer(&shared_data_timer);
 	shared_data_timer.function = update_user_shared_data_proc;
 	shared_data_timer.data = (unsigned long)0;
-	mod_timer(&shared_data_timer, jiffies + MSEC_TO_HZ(30));
 #endif
 	return 0;
 }
 
 int ntoskernel_init_device(struct wrap_device *wd)
 {
+#if defined(CONFIG_X86_64)
+	if (kuser_shared_data.reserved1)
+		mod_timer(&shared_data_timer, jiffies + MSEC_TO_HZ(30));
+#endif
 	return 0;
 }
 
