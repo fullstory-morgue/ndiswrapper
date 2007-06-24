@@ -1,9 +1,9 @@
-ndiswrapper (1.47-1) UNRELEASED; urgency=low
+ndiswrapper (1.47-1) unstable; urgency=low
 
-  * (NOT RELEASED YET) New upstream release
+  * New upstream release.
   * Add patch to allow build system to succeed with KBUILD defined only.
 
- -- Kel Modderman <kel@otaku42.de>  Fri, 22 Jun 2007 08:27:20 +1000
+ -- Kel Modderman <kel@otaku42.de>  Sun, 24 Jun 2007 20:55:36 +1000
 
 ndiswrapper (1.46-1) unstable; urgency=low
 
