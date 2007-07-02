@@ -1,3 +1,10 @@
+ndiswrapper (1.47-2) unstable; urgency=low
+
+  * Define KBUILD, KSRC and KVERS everytime we use upstream Makefile on module
+    build to avoid failure due to increased sanity checking.
+
+ -- Kel Modderman <kel@otaku42.de>  Mon, 02 Jul 2007 21:44:36 +1000
+
 ndiswrapper (1.47-1) unstable; urgency=low
 
   * New upstream release.
