@@ -167,7 +167,7 @@ static USBD_STATUS wrap_urb_status(int urb_status)
 	case 0:
 		return USBD_STATUS_SUCCESS;
 	case -EPROTO:
-		return USBD_STATUS_BTSTUFF;
+		return USBD_STATUS_TIMEOUT;
 	case -EILSEQ:
 		return USBD_STATUS_CRC;
 	case -EPIPE:
@@ -527,12 +527,12 @@ static void wrap_urb_complete_worker(worker_param_t dummy)
 		case -ECONNRESET:
 			/* urb canceled */
 			irp->io_status.info = 0;
-			USBTRACE("urb %p canceled", urb);
+			TRACE2("urb %p canceled", urb);
 			NT_URB_STATUS(nt_urb) = USBD_STATUS_SUCCESS;
 			irp->io_status.status = STATUS_CANCELLED;
 			break;
 		default:
-			USBTRACE("irp: %p, urb: %p, status: %d/%d",
+			TRACE2("irp: %p, urb: %p, status: %d/%d",
 				 irp, urb, urb->status, wrap_urb->state);
 			irp->io_status.info = 0;
 			NT_URB_STATUS(nt_urb) = wrap_urb_status(urb->status);
@@ -562,7 +562,7 @@ static USBD_STATUS wrap_bulk_or_intr_trans(struct irp *irp)
 	udev = IRP_WRAP_DEVICE(irp)->usb.udev;
 	bulk_int_tx = &nt_urb->bulk_int_transfer;
 	pipe_handle = bulk_int_tx->pipe_handle;
-	USBTRACE("flags: %X, length: %u, buffer: %p, handle: %p",
+	USBTRACE("flags: 0x%x, length: %u, buffer: %p, handle: %p",
 		 bulk_int_tx->transfer_flags,
 		 bulk_int_tx->transfer_buffer_length,
 		 bulk_int_tx->transfer_buffer, pipe_handle);
@@ -775,6 +775,91 @@ static USBD_STATUS wrap_abort_pipe(struct usb_device *udev, struct irp *irp)
 	USBEXIT(return USBD_STATUS_SUCCESS);
 }
 
+static USBD_STATUS wrap_set_clear_feature(struct usb_device *udev,
+					  struct irp *irp)
+{
+	union nt_urb *nt_urb;
+	struct urb_control_feature_request *feat_req;
+	int ret = 0;
+	__u8 request, type;
+	__u16 feature;
+
+	nt_urb = IRP_URB(irp);
+	feat_req = &nt_urb->feat_req;
+	feature = feat_req->feature_selector;
+	switch (nt_urb->header.function) {
+	case URB_FUNCTION_SET_FEATURE_TO_DEVICE:
+		request = USB_REQ_SET_FEATURE;
+		type = USB_DT_DEVICE;
+		break;
+	case URB_FUNCTION_SET_FEATURE_TO_INTERFACE:
+		request = USB_REQ_SET_FEATURE;
+		type =  USB_DT_INTERFACE;
+		break;
+	case URB_FUNCTION_SET_FEATURE_TO_ENDPOINT:
+		request = USB_REQ_SET_FEATURE;
+		type =  USB_DT_ENDPOINT;
+		break;
+	case URB_FUNCTION_CLEAR_FEATURE_TO_DEVICE:
+		request = USB_REQ_CLEAR_FEATURE;
+		type =  USB_DT_DEVICE;
+		break;
+	case URB_FUNCTION_CLEAR_FEATURE_TO_INTERFACE:
+		request = USB_REQ_CLEAR_FEATURE;
+		type =  USB_DT_INTERFACE;
+		break;
+	case URB_FUNCTION_CLEAR_FEATURE_TO_ENDPOINT:
+		request = USB_REQ_CLEAR_FEATURE;
+		type =  USB_DT_ENDPOINT;
+		break;
+	default:
+		WARNING("invalid function: %x", nt_urb->header.function);
+		NT_URB_STATUS(nt_urb) = USBD_STATUS_NOT_SUPPORTED;
+		return NT_URB_STATUS(nt_urb);
+	}
+	ret = usb_control_msg(udev, usb_sndctrlpipe(udev, 0), request, type,
+			      feature, feat_req->index, NULL, 0, 1000);
+	NT_URB_STATUS(nt_urb) = wrap_urb_status(ret);
+	USBEXIT(return NT_URB_STATUS(nt_urb));
+}
+
+static USBD_STATUS wrap_get_status_request(struct usb_device *udev,
+					   struct irp *irp)
+{
+	union nt_urb *nt_urb;
+	struct urb_control_get_status_request *status_req;
+	int ret = 0;
+	__u8 type;
+
+	nt_urb = IRP_URB(irp);
+	status_req = &nt_urb->status_req;
+	switch (nt_urb->header.function) {
+	case URB_FUNCTION_GET_STATUS_FROM_DEVICE:
+		type = USB_RECIP_DEVICE;
+		break;
+	case URB_FUNCTION_GET_STATUS_FROM_INTERFACE:
+		type = USB_RECIP_INTERFACE;
+		break;
+	case URB_FUNCTION_GET_STATUS_FROM_ENDPOINT:
+		type = USB_RECIP_ENDPOINT;
+		break;
+	default:
+		WARNING("invalid function: %x", nt_urb->header.function);
+		NT_URB_STATUS(nt_urb) = USBD_STATUS_NOT_SUPPORTED;
+		return NT_URB_STATUS(nt_urb);
+	}
+	assert(status_req->transfer_buffer_length == sizeof(u16));
+	ret = usb_get_status(udev, type, status_req->index,
+			     status_req->transfer_buffer);
+	if (ret >= 0) {
+		assert(ret <= status_req->transfer_buffer_length);
+		status_req->transfer_buffer_length = ret;
+		NT_URB_STATUS(nt_urb) = USBD_STATUS_SUCCESS;
+	} else
+		NT_URB_STATUS(nt_urb) = wrap_urb_status(ret);
+	USBEXIT(return NT_URB_STATUS(nt_urb));
+}
+
 static void set_intf_pipe_info(struct wrap_device *wd,
 			       struct usb_interface *usb_intf,
 			       struct usbd_interface_information *intf)
@@ -808,13 +893,41 @@ static void set_intf_pipe_info(struct wrap_device *wd,
 		pipe->bEndpointAddress = ep->bEndpointAddress;
 		pipe->type = ep->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
 		if (pipe->type == UsbdPipeTypeInterrupt) {
-			/* for low speed devices, Linux sets bInterval
-			 * as frames per second, whereas Windows
-			 * interprets it as milliseconds */
+			/* Windows and Linux differ in how the
+			 * bInterval is interpretted */
+			/* for low speed:
+			   interval (Windows) -> frames per ms (Linux)
+			   0 to 15    -> 8
+			   16 to 35   -> 16
+			   36 to 255  -> 32
+
+			   for full speed: interval -> frames per ms
+			   1          -> 1
+			   2 to 3     -> 2
+			   4 to 7     -> 4
+			   8 to 15    -> 8
+			   16 to 31   -> 16
+			   32 to 255  -> 32
+
+			   for high speed: interval -> microframes
+			   1          -> 1
+			   2          -> 2
+			   3          -> 4
+			   4          -> 8
+			   5          -> 16
+			   6          -> 32
+			   7 to 255   -> 32
+			*/
 			if (wd->usb.udev->speed == USB_SPEED_LOW)
-				pipe->bInterval = 1 << (ep->bInterval - 1);
-			else
+				pipe->bInterval = ep->bInterval + 5;
+			else if (wd->usb.udev->speed == USB_SPEED_FULL)
 				pipe->bInterval = ep->bInterval;
+			else {
+				int i, j;
+				for (i = j = 1; j < ep->bInterval; i++)
+					j *= 2;
+				pipe->bInterval = i;
+			}
 		}
 		pipe->handle = ep;
 		USBTRACE("%d: ep 0x%x, type %d, pkt_sz %d, intv %d (%d),"
@@ -1030,6 +1143,21 @@ static USBD_STATUS wrap_process_nt_urb(struct irp *irp)
 		status = wrap_abort_pipe(udev, irp);
 		break;
 
+	case URB_FUNCTION_SET_FEATURE_TO_DEVICE:
+	case URB_FUNCTION_SET_FEATURE_TO_INTERFACE:
+	case URB_FUNCTION_SET_FEATURE_TO_ENDPOINT:
+	case URB_FUNCTION_CLEAR_FEATURE_TO_DEVICE:
+	case URB_FUNCTION_CLEAR_FEATURE_TO_INTERFACE:
+	case URB_FUNCTION_CLEAR_FEATURE_TO_ENDPOINT:
+		status = wrap_set_clear_feature(udev, irp);
+		break;
+
+	case URB_FUNCTION_GET_STATUS_FROM_DEVICE:
+	case URB_FUNCTION_GET_STATUS_FROM_INTERFACE:
+	case URB_FUNCTION_GET_STATUS_FROM_ENDPOINT:
+		status = wrap_get_status_request(udev, irp);
+		break;
+
 	default:
 		ERROR("function %x not implemented", nt_urb->header.function);
 		status = NT_URB_STATUS(nt_urb) = USBD_STATUS_NOT_SUPPORTED;
@@ -1050,7 +1178,8 @@ static USBD_STATUS wrap_reset_port(struct irp *irp)
 	lock = usb_lock_device_for_reset(wd->usb.udev, wd->usb.intf);
 	if (lock < 0) {
 		WARNING("locking failed: %d", lock);
-		return wrap_urb_status(lock);
+//		return wrap_urb_status(lock);
+		return USBD_STATUS_SUCCESS;
 	}
 #endif
 	ret = usb_reset_device(wd->usb.udev);
@@ -1061,7 +1190,8 @@ static USBD_STATUS wrap_reset_port(struct irp *irp)
 	if (lock)
 		usb_unlock_device(wd->usb.udev);
 #endif
-	return wrap_urb_status(ret);
+//	return wrap_urb_status(ret);
+	return USBD_STATUS_SUCCESS;
 }
 
 static USBD_STATUS wrap_get_port_status(struct irp *irp)
