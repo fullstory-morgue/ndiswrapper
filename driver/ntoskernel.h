@@ -48,6 +48,10 @@
 #include "winnt_types.h"
 #include "compat.h"
 
+#if !defined(CONFIG_X86) && !defined(CONFIG_X86_64)
+#error "this module is for x86 or x86_64 architectures only"
+#endif
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,7)
 #include <linux/kthread.h>
 #else
@@ -82,6 +86,7 @@
 	dma_map_sg(&pci_dev->dev, sglist, nents, direction)
 #define UNMAP_SG(pci_dev, sglist, nents, direction)		\
 	dma_unmap_sg(&pci_dev->dev, sglist, nents, direction)
+#define PCI_DMA_MAP_ERROR(dma_addr) dma_mapping_error(dma_addr)
 
 #else // linux version <= 2.5.41
 
@@ -97,6 +102,7 @@
 	pci_map_sg(dev, sglist, nents, direction)
 #define UNMAP_SG(dev, sglist, nents, direction)		\
 	pci_unmap_sg(dev, sglist, nents, direction)
+#define PCI_DMA_MAP_ERROR(dma_addr) pci_dma_mapping_error(dma_addr)
 
 #include <linux/smp_lock.h>
 
@@ -249,7 +255,7 @@ typedef void *worker_param_t;
 
 struct nt_thread *wrap_worker_init(workqueue_struct_t *wq);
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,9)
+#ifdef module_param
 #define WRAP_MODULE_PARM_INT(name, perm) module_param(name, int, perm)
 #define WRAP_MODULE_PARM_STRING(name, perm) module_param(name, charp, perm)
 #else
@@ -388,8 +394,24 @@ typedef u32 pm_message_t;
 #define DMA_30BIT_MASK 0x000000003fffffffULL
 #endif
 
+#ifndef DMA_31BIT_MASK
+#define DMA_31BIT_MASK 0x000000007fffffffULL
+#endif
+
 #ifndef DMA_32BIT_MASK
 #define DMA_32BIT_MASK 0x00000000ffffffffULL
+#endif
+
+#ifndef __GFP_DMA32
+#define __GFP_DMA32 GFP_DMA
+#endif
+
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,22)
+#define wrap_kmem_cache_create(name, size, align, flags)	\
+	kmem_cache_create(name, size, align, flags, NULL, NULL)
+#else
+#define wrap_kmem_cache_create(name, size, align, flags)	\
+	kmem_cache_create(name, size, align, flags, NULL)
 #endif
 
 #include "ndiswrapper.h"
@@ -397,10 +419,6 @@ typedef u32 pm_message_t;
 #include "wrapmem.h"
 #include "lin2win.h"
 #include "loader.h"
-
-#ifdef DEBUG
-#define DEBUG_IRQL 1
-#endif
 
 #if !defined(CONFIG_USB) && defined(CONFIG_USB_MODULE)
 #define CONFIG_USB 1
@@ -417,6 +435,8 @@ typedef u32 pm_message_t;
 #define SECSPERDAY		86400
 #define TICKSPERJIFFY		((TICKSPERSEC + HZ - 1) / HZ)
 
+#define int_div_round(x, y) (((x) + (y - 1)) / (y))
+
 /* 1601 to 1970 is 369 years plus 89 leap days */
 #define SECS_1601_TO_1970	((369 * 365 + 89) * (u64)SECSPERDAY)
 #define TICKS_1601_TO_1970	(SECS_1601_TO_1970 * TICKSPERSEC)
@@ -424,11 +444,12 @@ typedef u32 pm_message_t;
 /* 100ns units to HZ; if sys_time is negative, relative to current
  * clock, otherwise from year 1601 */
 #define SYSTEM_TIME_TO_HZ(sys_time)					\
-	((((sys_time) <= 0) ? (((u64)HZ * (-(sys_time))) / TICKSPERSEC) : \
-	  (((s64)HZ * ((sys_time) - ticks_1601())) / TICKSPERSEC)))
+	(((sys_time) <= 0) ? \
+	 int_div_round(((u64)HZ * (-(sys_time))), TICKSPERSEC) :	\
+	 int_div_round(((s64)HZ * ((sys_time) - ticks_1601())), TICKSPERSEC))
 
-#define MSEC_TO_HZ(ms) (((ms * HZ) + 999) / 1000)
-#define USEC_TO_HZ(us) (((us * HZ) + 999999) / 1000000)
+#define MSEC_TO_HZ(ms) int_div_round((ms * HZ), 1000)
+#define USEC_TO_HZ(us) int_div_round((us * HZ), 1000000)
 
 extern u64 wrap_ticks_to_boot;
 
@@ -659,7 +680,11 @@ do {									\
  * DISPATCH_LEVEL on each cpu - the kernel is free to preempt any of
  * these threads */
 
-#if !defined(inc_preempt_count)
+#if !defined(inc_preempt_count) || defined(CONFIG_PREEMPT_RT)
+#define WARP_PREEMPT 1
+#endif
+
+#if !defined(CONFIG_PREEMPT)
 #define WARP_PREEMPT 1
 #endif
 
@@ -670,38 +695,6 @@ extern int warp_preempt_count;
 #define warp_preempt_enable() atomic_dec_var(warp_preempt_count)
 #define warp_preempt_enable_no_resched() warp_preempt_enable()
 #define warp_in_atomic() (warp_preempt_count || in_atomic())
-
-#elif defined(CONFIG_PREEMPT_RT)
-
-DECLARE_PER_CPU(int, warp_preempt_count);
-DECLARE_PER_CPU(spinlock_t, warp_preempt_lock);
-#define warp_preempt_disable()						\
-do {									\
-	int count = get_cpu_var(warp_preempt_count)++;			\
-	spinlock_t *lock = &__get_cpu_var(warp_preempt_lock);		\
-	if (count == 0) {						\
-		assert(!spin_is_locked(lock));				\
-		rt_spin_lock(lock);					\
-	}								\
-	put_cpu_var(warp_preempt_count);				\
-} while (0)
-#define warp_preempt_enable()						\
-do {									\
-	int count = --(get_cpu_var(warp_preempt_count));		\
-	spinlock_t *lock = &__get_cpu_var(warp_preempt_lock);		\
-	if (count == 0) {						\
-		assert(spin_is_locked(lock));				\
-		rt_spin_unlock(lock);					\
-	}								\
-	put_cpu_var(warp_preempt_count);				\
-} while (0)
-#define warp_preempt_enable_no_resched() warp_preempt_enable()
-#define warp_in_atomic()						\
-({									\
-	int count = get_cpu_var(warp_preempt_count);			\
-	put_cpu_var(warp_preempt_count);				\
-	count || in_atomic();						\
-})
 
 #elif defined(CONFIG_PREEMPT)
 
@@ -716,21 +709,21 @@ do {									\
 
 #else
 
-#define warp_preempt_disable() inc_preempt_count()
-#define warp_preempt_enable() dec_preempt_count()
-#define warp_preempt_enable_no_resched() warp_preempt_enable()
+#define warp_preempt_disable() do { } while (0)
+#define warp_preempt_enable() do { } while (0)
+#define warp_preempt_enable_no_resched() do { } while (0)
 #define warp_in_atomic() in_atomic()
 
 #endif
 
+//#define DEBUG_IRQL 1
+
 static inline KIRQL current_irql(void)
 {
-#ifdef DEBUG_IRQL
 	if (in_irq() || irqs_disabled())
 		EXIT4(return DIRQL);
 	if (in_interrupt())
 		EXIT4(return SOFT_IRQL);
-#endif
 	if (warp_in_atomic())
 		EXIT6(return DISPATCH_LEVEL);
 	else
@@ -776,7 +769,7 @@ do {									\
 	KIRQL _irql_ = current_irql();					\
 	if (!(cond)) {							\
 		WARNING("assertion '%s' failed: %d", #cond, _irql_);	\
-		DBG_BLOCK(1) {						\
+		DBG_BLOCK(4) {						\
 			dump_stack();					\
 		}							\
 	}								\
@@ -848,21 +841,6 @@ do {						\
 do {						\
 	nt_spin_unlock(lock);			\
 	atomic_dec_var(warp_preempt_count);	\
-} while (0)
-
-#elif defined(CONFIG_PREEMPT_RT)
-
-#define nt_spin_lock_warp_preempt(lock)		\
-do {						\
-	get_cpu_var(warp_preempt_count)++;	\
-	put_cpu_var(warp_preempt_count);	\
-	nt_spin_lock(lock);			\
-} while (0)
-#define nt_spin_unlock_warp_preempt(lock)	\
-do {						\
-	nt_spin_unlock(lock);			\
-	get_cpu_var(warp_preempt_count)--;	\
-	put_cpu_var(warp_preempt_count);	\
 } while (0)
 
 #else
@@ -1200,6 +1178,9 @@ LONG RtlCompareUnicodeString(const struct unicode_string *s1,
 			     BOOLEAN case_insensitive) wstdcall;
 void RtlCopyUnicodeString(struct unicode_string *dst,
 			  struct unicode_string *src) wstdcall;
+NTSTATUS RtlUpcaseUnicodeString(struct unicode_string *dst,
+				struct unicode_string *src,
+				BOOLEAN alloc) wstdcall;
 void KeInitializeTimer(struct nt_timer *nt_timer) wstdcall;
 void KeInitializeTimerEx(struct nt_timer *nt_timer,
 			 enum timer_type type) wstdcall;

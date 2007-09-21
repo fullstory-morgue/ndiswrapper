@@ -1,3 +1,9 @@
+ndiswrapper (1.48-1) UNRELEASED; urgency=low
+
+  * (NOT RELEASED YET) New upstream release
+
+ -- Kel Modderman <kel@otaku42.de>  Fri, 21 Sep 2007 11:03:39 +1000
+
 ndiswrapper (1.47-3) UNRELEASED; urgency=low
 
   * Fix DIST_DESTDIR target in debian/rules.modules to prevent installation of

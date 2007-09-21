@@ -44,6 +44,8 @@ typedef ULONG ndis_rts_threshold;
 typedef ULONG ndis_antenna;
 typedef ULONG ndis_oid;
 
+typedef UCHAR ndis_pmkid_vavlue[16];
+
 typedef uint64_t NDIS_PHY_ADDRESS;
 
 struct ndis_sg_element {
@@ -607,7 +609,7 @@ enum ndis_media_stream_mode {
 };
 
 enum wrapper_work {
-	LINK_STATUS_CHANGED, SET_MULTICAST_LIST, COLLECT_IW_STATS,
+	LINK_STATUS_OFF, LINK_STATUS_ON, SET_MULTICAST_LIST, COLLECT_IW_STATS,
 	HANGCHECK, SHUTDOWN
 };
 
@@ -624,7 +626,7 @@ struct ndis_essid {
 	UCHAR essid[NDIS_ESSID_MAX_SIZE];
 };
 
-enum network_infrastructure {
+enum ndis_infrastructure_mode {
 	Ndis802_11IBSS, Ndis802_11Infrastructure, Ndis802_11AutoUnknown,
 	Ndis802_11InfrastructureMax
 };
@@ -725,7 +727,16 @@ struct auth_encr_capa {
 	unsigned long encr;
 };
 
-enum driver_type { DRIVER_WIRELESS = 1, DRIVER_ETHERNET, };
+struct ndis_pmkid_candidate {
+	mac_address bssid;
+	DWORD flags;
+};
+
+struct ndis_pmkid_candidate_list {
+	ULONG version;
+	ULONG num_candidates;
+	struct ndis_pmkid_candidate candidates[1];
+};
 
 /*
  * This struct contains function pointers that the drivers references
@@ -867,22 +878,21 @@ struct wrap_ndis_device {
 	char nick[IW_ESSID_MAX_SIZE];
 	struct ndis_essid essid;
 	struct auth_encr_capa capa;
-	enum authentication_mode auth_mode;
-	enum encryption_status encr_mode;
-	enum network_infrastructure infrastructure_mode;
+	enum ndis_infrastructure_mode infrastructure_mode;
+	int max_pmkids;
 	int num_pmkids;
+	struct ndis_pmkid *pmkids;
 	mac_address mac;
 	struct proc_dir_entry *procfs_iface;
 
 	work_struct_t wrap_ndis_work;
 	unsigned long wrap_ndis_pending_work;
 	UINT attributes;
-	int iw_auth_set;
 	int iw_auth_wpa_version;
 	int iw_auth_cipher_pairwise;
 	int iw_auth_cipher_group;
 	int iw_auth_key_mgmt;
-	int iw_auth_80211_auth_alg;
+	int iw_auth_80211_alg;
 	struct ndis_packet_pool *tx_packet_pool;
 	struct ndis_buffer_pool *tx_buffer_pool;
 	int multicast_size;
@@ -894,17 +904,6 @@ struct wrap_ndis_device {
 	int drv_ndis_version;
 	struct ndis_pnp_capabilities pnp_capa;
 	char netdev_name[IFNAMSIZ];
-};
-
-struct ndis_pmkid_candidate {
-	mac_address bssid;
-	unsigned long flags;
-};
-
-struct ndis_pmkid_candidate_list {
-	unsigned long version;
-	unsigned long num_candidates;
-	struct ndis_pmkid_candidate candidates[1];
 };
 
 BOOLEAN ndis_isr(struct kinterrupt *kinterrupt, void *ctx) wstdcall;

@@ -88,8 +88,7 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMRegisterMiniport,3)
 		EXIT1(return NDIS_STATUS_RESOURCES);
 	wrap_driver->ndis_driver = ndis_driver;
 	TRACE1("driver: %p", ndis_driver);
-	memcpy(&ndis_driver->mp, mp, length > sizeof(*mp) ?
-	       sizeof(*mp) : length);
+	memcpy(&ndis_driver->mp, mp, min_t(int, sizeof(*mp), length));
 
 	DBG_BLOCK(2) {
 		int i;
@@ -470,7 +469,6 @@ wstdcall void WIN_FUNC(NdisReadConfiguration,5)
 	 enum ndis_parameter_type type)
 {
 	struct ansi_string ansi;
-	char *keyname;
 	int ret;
 
 	ENTER2("nmb: %p", nmb);
@@ -481,16 +479,15 @@ wstdcall void WIN_FUNC(NdisReadConfiguration,5)
 		RtlFreeAnsiString(&ansi);
 		EXIT2(return);
 	}
-	TRACE3("%d, %s", type, ansi.buf);
-	keyname = ansi.buf;
+	TRACE2("%d, %s", type, ansi.buf);
 
-	if (read_setting(&nmb->wnd->wd->settings, keyname,
+	if (read_setting(&nmb->wnd->wd->settings, ansi.buf,
 			 ansi.length, param, type) == 0 ||
-	    read_setting(&nmb->wnd->wd->driver->settings, keyname,
+	    read_setting(&nmb->wnd->wd->driver->settings, ansi.buf,
 			 ansi.length, param, type) == 0)
 		*status = NDIS_STATUS_SUCCESS;
 	else {
-		TRACE2("setting %s not found (type:%d)", keyname, type);
+		TRACE2("setting %s not found (type:%d)", ansi.buf, type);
 		*status = NDIS_STATUS_FAILURE;
 	}
 	RtlFreeAnsiString(&ansi);
@@ -603,6 +600,12 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisUnicodeStringToAnsiString,2)
 		return NDIS_STATUS_SUCCESS;
 	else
 		return NDIS_STATUS_FAILURE;
+}
+
+wstdcall NTSTATUS WIN_FUNC(NdisUpcaseUnicodeString,2)
+	(struct unicode_string *dst, struct unicode_string *src)
+{
+	EXIT2(return RtlUpcaseUnicodeString(dst, src, FALSE));
 }
 
 wstdcall void WIN_FUNC(NdisMSetAttributesEx,5)
@@ -786,7 +789,7 @@ wstdcall void WIN_FUNC(NdisMUnmapIoSpace,3)
 wstdcall void WIN_FUNC(NdisAllocateSpinLock,1)
 	(struct ndis_spinlock *lock)
 {
-	TRACE4("lock %p, %lu", lock, lock->klock);
+	TRACE4("lock %p, %p", lock, &lock->klock);
 	KeInitializeSpinLock(&lock->klock);
 	lock->irql = PASSIVE_LEVEL;
 	EXIT4(return);
@@ -795,15 +798,15 @@ wstdcall void WIN_FUNC(NdisAllocateSpinLock,1)
 wstdcall void WIN_FUNC(NdisFreeSpinLock,1)
 	(struct ndis_spinlock *lock)
 {
-	TRACE4("lock %p, %lu", lock, lock->klock);
+	TRACE4("lock %p, %p", lock, &lock->klock);
 	EXIT4(return);
 }
 
 wstdcall void WIN_FUNC(NdisAcquireSpinLock,1)
 	(struct ndis_spinlock *lock)
 {
-	ENTER6("lock %p, %lu", lock, lock->klock);
-	assert_irql(_irql_ <= DISPATCH_LEVEL);
+	ENTER6("lock %p, %p", lock, &lock->klock);
+//	assert_irql(_irql_ <= DISPATCH_LEVEL);
 	lock->irql = nt_spin_lock_irql(&lock->klock, DISPATCH_LEVEL);
 	EXIT6(return);
 }
@@ -811,7 +814,8 @@ wstdcall void WIN_FUNC(NdisAcquireSpinLock,1)
 wstdcall void WIN_FUNC(NdisReleaseSpinLock,1)
 	(struct ndis_spinlock *lock)
 {
-	ENTER6("lock %p, %lu", lock, lock->klock);
+	ENTER6("lock %p, %p", lock, &lock->klock);
+//	assert_irql(_irql_ == DISPATCH_LEVEL);
 	nt_spin_unlock_irql(&lock->klock, lock->irql);
 	EXIT6(return);
 }
@@ -819,8 +823,8 @@ wstdcall void WIN_FUNC(NdisReleaseSpinLock,1)
 wstdcall void WIN_FUNC(NdisDprAcquireSpinLock,1)
 	(struct ndis_spinlock *lock)
 {
-	ENTER6("lock %p", lock);
-	assert_irql(_irql_ == DISPATCH_LEVEL);
+	ENTER6("lock %p", &lock->klock);
+//	assert_irql(_irql_ == DISPATCH_LEVEL);
 	nt_spin_lock(&lock->klock);
 	EXIT6(return);
 }
@@ -828,8 +832,8 @@ wstdcall void WIN_FUNC(NdisDprAcquireSpinLock,1)
 wstdcall void WIN_FUNC(NdisDprReleaseSpinLock,1)
 	(struct ndis_spinlock *lock)
 {
-	ENTER6("lock %p", lock);
-	assert_irql(_irql_ == DISPATCH_LEVEL);
+	ENTER6("lock %p", &lock->klock);
+//	assert_irql(_irql_ == DISPATCH_LEVEL);
 	nt_spin_unlock(&lock->klock);
 	EXIT6(return);
 }
@@ -892,11 +896,23 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMAllocateMapRegisters,5)
 		EXIT2(return NDIS_STATUS_RESOURCES);
 	}
 	if (dmasize == NDIS_DMA_24BITS) {
-		pci_set_dma_mask(wnd->wd->pci.pdev, DMA_24BIT_MASK);
-		pci_set_consistent_dma_mask(wnd->wd->pci.pdev, DMA_24BIT_MASK);
+		if (pci_set_dma_mask(wnd->wd->pci.pdev, DMA_24BIT_MASK) ||
+		    pci_set_consistent_dma_mask(wnd->wd->pci.pdev,
+						DMA_24BIT_MASK))
+			WARNING("setting dma mask failed");
 	} else if (dmasize == NDIS_DMA_32BITS) {
-		pci_set_dma_mask(wnd->wd->pci.pdev, DMA_32BIT_MASK);
-		pci_set_consistent_dma_mask(wnd->wd->pci.pdev, DMA_32BIT_MASK);
+		/* consistent dma is in low 32-bits by default */
+		if (pci_set_dma_mask(wnd->wd->pci.pdev, DMA_32BIT_MASK))
+			WARNING("setting dma mask failed");
+#ifdef CONFIG_X86_64
+	} else if (dmasize == NDIS_DMA_64BITS) {
+		if (pci_set_dma_mask(wnd->wd->pci.pdev, DMA_64BIT_MASK) ||
+		    pci_set_consistent_dma_mask(wnd->wd->pci.pdev,
+						DMA_64BIT_MASK))
+			WARNING("setting dma mask failed");
+		else
+			wnd->net_dev->features |= NETIF_F_HIGHDMA;
+#endif
 	}
 	/* since memory for buffer is allocated with kmalloc, buffer
 	 * is physically contiguous, so entire map will fit in one
@@ -1014,10 +1030,11 @@ wstdcall void WIN_FUNC(NdisMAllocateSharedMemory,5)
 
 	ENTER3("size: %u, cached: %d", size, cached);
 	*virt = PCI_DMA_ALLOC_COHERENT(wd->pci.pdev, size, &dma_addr);
-	if (!*virt)
+	if (*virt)
+		*phys = dma_addr;
+	else
 		WARNING("couldn't allocate %d bytes of %scached DMA memory",
 			size, cached ? "" : "un-");
-	*phys = dma_addr;
 	EXIT3(return);
 }
 
@@ -1026,7 +1043,7 @@ wstdcall void WIN_FUNC(NdisMFreeSharedMemory,5)
 	 void *virt, NDIS_PHY_ADDRESS addr)
 {
 	struct wrap_device *wd = nmb->wnd->wd;
-	ENTER3("");
+	ENTER3("%p, %Lx, %u", virt, addr, size);
 	PCI_DMA_FREE_COHERENT(wd->pci.pdev, size, virt, addr);
 	EXIT3(return);
 }
@@ -1124,6 +1141,7 @@ wstdcall void WIN_FUNC(NdisAllocateBuffer,5)
 	assert_irql(_irql_ <= DISPATCH_LEVEL || _irql_ == SOFT_IRQL);
 	if (!pool) {
 		*status = NDIS_STATUS_FAILURE;
+		*buffer = NULL;
 		EXIT4(return);
 	}
 	nt_spin_lock_bh(&pool->lock);
@@ -1139,10 +1157,11 @@ wstdcall void WIN_FUNC(NdisAllocateBuffer,5)
 			descr->flags |= MDL_CACHE_ALLOCATED;
 	} else {
 		if (pool->num_allocated_descr > pool->max_descr) {
-			TRACE3("pool %p is full: %d(%d)", pool,
+			TRACE2("pool %p is full: %d(%d)", pool,
 			       pool->num_allocated_descr, pool->max_descr);
 #ifndef ALLOW_POOL_OVERFLOW
-			*status = NDIS_STATUS_RESOURCES;
+			*status = NDIS_STATUS_FAILURE;
+			*buffer = NULL;
 			return;
 #endif
 		}
@@ -1150,9 +1169,10 @@ wstdcall void WIN_FUNC(NdisAllocateBuffer,5)
 		if (!descr) {
 			WARNING("couldn't allocate buffer");
 			*status = NDIS_STATUS_FAILURE;
+			*buffer = NULL;
 			EXIT4(return);
 		}
-		TRACE4("allocated buffer %p for %p, %d", descr, virt, length);
+		TRACE4("buffer %p for %p, %d", descr, virt, length);
 		atomic_inc_var(pool->num_allocated_descr);
 	}
 	/* TODO: make sure this mdl can map given buffer */
@@ -1430,6 +1450,7 @@ wstdcall void WIN_FUNC(NdisAllocatePacket,3)
 	ENTER4("pool: %p", pool);
 	if (!pool) {
 		*status = NDIS_STATUS_RESOURCES;
+		*ndis_packet = NULL;
 		EXIT4(return);
 	}
 	assert_irql(_irql_ <= DISPATCH_LEVEL || _irql_ == SOFT_IRQL);
@@ -1438,6 +1459,7 @@ wstdcall void WIN_FUNC(NdisAllocatePacket,3)
 		       pool->num_used_descr, pool->max_descr);
 #ifndef ALLOW_POOL_OVERFLOW
 		*status = NDIS_STATUS_RESOURCES;
+		*ndis_packet = NULL;
 		return;
 #endif
 	}
@@ -1445,20 +1467,15 @@ wstdcall void WIN_FUNC(NdisAllocatePacket,3)
 	packet_length = sizeof(*packet) - 1 + pool->proto_rsvd_length +
 		sizeof(struct ndis_packet_oob_data);
 	nt_spin_lock_bh(&pool->lock);
-	if ((packet = pool->free_descr)) {
+	if ((packet = pool->free_descr))
 		pool->free_descr = (void *)packet->reserved[0];
-		DBG_BLOCK(1) {
-			if (packet->private.packet_flags)
-				WARNING("invalid packet: %p, %p, %p", pool,
-					packet, pool->free_descr);
-		}
-	}
 	nt_spin_unlock_bh(&pool->lock);
 	if (!packet) {
 		packet = kmalloc(packet_length, irql_gfp());
 		if (!packet) {
 			WARNING("couldn't allocate packet");
 			*status = NDIS_STATUS_RESOURCES;
+			*ndis_packet = NULL;
 			return;
 		}
 		atomic_inc_var(pool->num_allocated_descr);
@@ -1505,12 +1522,6 @@ wstdcall void WIN_FUNC(NdisFreePacket,1)
 		pool->num_allocated_descr--;
 		kfree(packet);
 	} else {
-		DBG_BLOCK(1) {
-			if (!packet->private.packet_flags)
-				WARNING("invalid packet: %p, %p, %p", pool,
-					packet, pool->free_descr);
-			packet->private.packet_flags = 0;
-		}
 		TRACE4("%p, %p, %p", pool, packet, pool->free_descr);
 		packet->reserved[0] =
 			(typeof(packet->reserved[0]))pool->free_descr;
@@ -1783,9 +1794,10 @@ wstdcall void WIN_FUNC(NdisReadNetworkAddress,4)
 	struct ndis_configuration_parameter *param;
 	struct unicode_string key;
 	struct ansi_string ansi;
+	int int_mac[ETH_ALEN];
 	int ret;
 
-	ENTER1("");
+	ENTER2("%p", nmb);
 	RtlInitAnsiString(&ansi, "NetworkAddress");
 	*len = 0;
 	*status = NDIS_STATUS_FAILURE;
@@ -1794,29 +1806,24 @@ wstdcall void WIN_FUNC(NdisReadNetworkAddress,4)
 
 	NdisReadConfiguration(status, &param, nmb, &key, NdisParameterString);
 	RtlFreeUnicodeString(&key);
+	if (*status != NDIS_STATUS_SUCCESS)
+		EXIT1(return);
+	ret = RtlUnicodeStringToAnsiString(&ansi, &param->data.string, TRUE);
+	if (ret != STATUS_SUCCESS)
+		EXIT1(return);
 
-	if (*status == NDIS_STATUS_SUCCESS) {
-		int int_mac[ETH_ALEN];
-		ret = RtlUnicodeStringToAnsiString(&ansi, &param->data.string,
-						   TRUE);
-		if (ret != STATUS_SUCCESS)
-			EXIT1(return);
-
-		ret = sscanf(ansi.buf, MACSTR, MACINTADR(int_mac));
-		RtlFreeAnsiString(&ansi);
-		if (ret == ETH_ALEN) {
-			int i;
-			for (i = 0; i < ETH_ALEN; i++)
-				wnd->mac[i] = int_mac[i];
-			printk(KERN_INFO "%s: %s ethernet device " MACSTRSEP
-			       "\n", wnd->net_dev->name, DRIVER_NAME,
-			       MAC2STR(wnd->mac));
-			*len = ETH_ALEN;
-			*addr = wnd->mac;
-			*status = NDIS_STATUS_SUCCESS;
-		}
+	ret = sscanf(ansi.buf, MACSTR, MACINTADR(int_mac));
+	RtlFreeAnsiString(&ansi);
+	if (ret == ETH_ALEN) {
+		int i;
+		for (i = 0; i < ETH_ALEN; i++)
+			wnd->mac[i] = int_mac[i];
+		printk(KERN_INFO "%s: %s ethernet device " MACSTRSEP "\n",
+		       wnd->net_dev->name, DRIVER_NAME, MAC2STR(wnd->mac));
+		*len = ETH_ALEN;
+		*addr = wnd->mac;
+		*status = NDIS_STATUS_SUCCESS;
 	}
-
 	EXIT1(return);
 }
 
@@ -1990,8 +1997,7 @@ wstdcall BOOLEAN WIN_FUNC(NdisMSynchronizeWithInterrupt,3)
 
 /* called via function pointer; but 64-bit RNDIS driver calls directly */
 wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
-	(struct ndis_mp_block *nmb, NDIS_STATUS status,
-	 void *buf, UINT len)
+	(struct ndis_mp_block *nmb, NDIS_STATUS status, void *buf, UINT len)
 {
 	struct wrap_ndis_device *wnd = nmb->wnd;
 	struct ndis_status_indication *si;
@@ -2000,19 +2006,25 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 
 	ENTER2("status=0x%x len=%d", status, len);
 	switch (status) {
-	case NDIS_STATUS_MEDIA_DISCONNECT:
-		if (!netif_carrier_ok(wnd->net_dev))
-			break;
-		netif_carrier_off(wnd->net_dev);
-		set_bit(LINK_STATUS_CHANGED, &wnd->wrap_ndis_pending_work);
-		schedule_wrapndis_work(&wnd->wrap_ndis_work);
-		break;
 	case NDIS_STATUS_MEDIA_CONNECT:
-		if (netif_carrier_ok(wnd->net_dev))
-			break;
 		netif_carrier_on(wnd->net_dev);
-		set_bit(LINK_STATUS_CHANGED, &wnd->wrap_ndis_pending_work);
-		schedule_wrapndis_work(&wnd->wrap_ndis_work);
+		wnd->tx_ok = 1;
+		if (netif_queue_stopped(wnd->net_dev))
+			netif_wake_queue(wnd->net_dev);
+		if (wnd->physical_medium == NdisPhysicalMediumWirelessLan) {
+			set_bit(LINK_STATUS_ON, &wnd->wrap_ndis_pending_work);
+			schedule_wrapndis_work(&wnd->wrap_ndis_work);
+		}
+		break;
+	case NDIS_STATUS_MEDIA_DISCONNECT:
+		netif_carrier_off(wnd->net_dev);
+		netif_stop_queue(wnd->net_dev);
+		wnd->tx_ok = 0;
+		if (wnd->physical_medium == NdisPhysicalMediumWirelessLan) {
+			memset(&wnd->essid, 0, sizeof(wnd->essid));
+			set_bit(LINK_STATUS_OFF, &wnd->wrap_ndis_pending_work);
+			schedule_wrapndis_work(&wnd->wrap_ndis_work);
+		}
 		break;
 	case NDIS_STATUS_MEDIA_SPECIFIC_INDICATION:
 		if (!buf)
@@ -2027,17 +2039,42 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 			buf = (char *)buf + sizeof(*si);
 			len -= sizeof(*si);
 			while (len > 0) {
+				int pairwise_error = 0, group_error = 0;
 				auth_req = (struct ndis_auth_req *)buf;
 				TRACE1(MACSTRSEP, MAC2STR(auth_req->bssid));
 				if (auth_req->flags & 0x01)
-					TRACE2("reqauth");
+					TRACE2("reauth request");
 				if (auth_req->flags & 0x02)
-					TRACE2("keyupdate");
-				if (auth_req->flags & 0x06)
+					TRACE2("key update request");
+				if (auth_req->flags & 0x06) {
+					pairwise_error = 1;
 					TRACE2("pairwise_error");
-				if (auth_req->flags & 0x0E)
+				}
+				if (auth_req->flags & 0x0E) {
+					group_error = 1;
 					TRACE2("group_error");
-				/* TODO: report to wpa_supplicant */
+				}
+#if WIRELESS_EXT > 17
+				if (pairwise_error || group_error) {
+					union iwreq_data wrqu;
+					struct iw_michaelmicfailure micfailure;
+
+					memset(&micfailure, 0, sizeof(micfailure));
+					if (pairwise_error)
+						micfailure.flags |=
+							IW_MICFAILURE_PAIRWISE;
+					if (group_error)
+						micfailure.flags |=
+							IW_MICFAILURE_GROUP;
+					memcpy(micfailure.src_addr.sa_data,
+					       auth_req->bssid, ETH_ALEN);
+					memset(&wrqu, 0, sizeof(wrqu));
+					wrqu.data.length = sizeof(micfailure);
+					wireless_send_event(wnd->net_dev,
+							    IWEVMICHAELMICFAILURE,
+							    &wrqu, (u8 *)&micfailure);
+				}
+#endif
 				len -= auth_req->length;
 				buf = (char *)buf + auth_req->length;
 			}
@@ -2052,13 +2089,12 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 			if (len < sizeof(struct ndis_status_indication) +
 			    sizeof(struct ndis_pmkid_candidate_list) ||
 				cand->version != 1) {
-				WARNING("Unrecognized PMKID_CANDIDATE_LIST"
-					" ignored");
+				WARNING("unrecognized PMKID ignored");
 				EXIT1(return);
 			}
 
 			end = (u8 *)buf + len;
-			TRACE2("PMKID_CANDIDATE_LIST ver %ld num_cand %ld",
+			TRACE2("PMKID ver %d num_cand %d",
 			       cand->version, cand->num_candidates);
 			for (i = 0; i < cand->num_candidates; i++) {
 #if WIRELESS_EXT > 17
@@ -2068,10 +2104,10 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 				struct ndis_pmkid_candidate *c =
 					&cand->candidates[i];
 				if ((u8 *)(c + 1) > end) {
-					TRACE2("Truncated PMKID_CANDIDATE_LIST");
+					TRACE2("truncated PMKID");
 					break;
 				}
-				TRACE2("%ld: " MACSTRSEP " 0x%lx",
+				TRACE2("%ld: " MACSTRSEP " 0x%x",
 				       i, MAC2STR(c->bssid), c->flags);
 #if WIRELESS_EXT > 17
 				memset(&pcand, 0, sizeof(pcand));
@@ -2092,13 +2128,13 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 			radio_status = buf;
 			if (radio_status->radio_state ==
 			    Ndis802_11RadioStatusOn)
-				TRACE2("radio is turned on");
+				INFO("radio is turned on");
 			else if (radio_status->radio_state ==
 				 Ndis802_11RadioStatusHardwareOff)
-				TRACE2("radio is turned off by hardware");
+				INFO("radio is turned off by hardware");
 			else if (radio_status->radio_state ==
 				 Ndis802_11RadioStatusSoftwareOff)
-				TRACE2("radio is turned off by software");
+				INFO("radio is turned off by software");
 			break;
 #endif
 		default:
@@ -2486,15 +2522,15 @@ wstdcall void NdisMSetInformationComplete(struct ndis_mp_block *nmb,
 					  NDIS_STATUS status)
 {
 	struct wrap_ndis_device *wnd = nmb->wnd;
-	ENTER2("status = %08X", status);
 
+	ENTER2("status = %08X", status);
 	wnd->ndis_req_status = status;
 	wnd->ndis_req_done = 1;
 	if (wnd->ndis_req_task)
 		wake_up_process(wnd->ndis_req_task);
 	else
 		WARNING("invalid task");
-	EXIT3(return);
+	EXIT2(return);
 }
 
 /* called via function pointer */
@@ -2503,14 +2539,14 @@ wstdcall void NdisMResetComplete(struct ndis_mp_block *nmb,
 {
 	struct wrap_ndis_device *wnd = nmb->wnd;
 
-	ENTER3("status: %08X, %u", status, address_reset);
+	ENTER2("status: %08X, %u", status, address_reset);
 	wnd->ndis_req_status = status;
 	wnd->ndis_req_done = address_reset + 1;
 	if (wnd->ndis_req_task)
 		wake_up_process(wnd->ndis_req_task);
 	else
 		WARNING("invalid task");
-	EXIT3(return);
+	EXIT2(return);
 }
 
 wstdcall void WIN_FUNC(NdisMSleep,1)
@@ -2571,8 +2607,10 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMInitializeScatterGatherDma,3)
 #ifdef CONFIG_X86_64
 	if (dma_size != NDIS_DMA_64BITS) {
 		TRACE1("DMA size is not 64-bits");
-		pci_set_dma_mask(wnd->wd->pci.pdev, DMA_32BIT_MASK);
-		pci_set_consistent_dma_mask(wnd->wd->pci.pdev, DMA_32BIT_MASK);
+		if (pci_set_dma_mask(wnd->wd->pci.pdev, DMA_32BIT_MASK) ||
+		    pci_set_consistent_dma_mask(wnd->wd->pci.pdev,
+						DMA_32BIT_MASK))
+			WARNING("setting dma mask failed");
 	}
 #endif
 	if ((wnd->attributes & NDIS_ATTRIBUTE_BUS_MASTER) &&

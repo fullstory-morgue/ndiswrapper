@@ -341,13 +341,13 @@ wfastcall NTSTATUS WIN_FUNC(IofCallDriver,2)
 	driver_dispatch_t *major_func;
 	struct driver_object *drv_obj;
 
-	IOTRACE("%p, %p, %p, %d, %d, %p", dev_obj, irp, dev_obj->drv_obj,
-		irp->current_location, irp->stack_count,
-		IoGetCurrentIrpStackLocation(irp));
 	if (irp->current_location <= 0) {
 		ERROR("invalid irp: %p, %d", irp, irp->current_location);
 		return STATUS_INVALID_PARAMETER;
 	}
+	IOTRACE("%p, %p, %p, %d, %d, %p", dev_obj, irp, dev_obj->drv_obj,
+		irp->current_location, irp->stack_count,
+		IoGetCurrentIrpStackLocation(irp));
 	IoSetNextIrpStackLocation(irp);
 	DUMP_IRP(irp);
 	irp_sl = IoGetCurrentIrpStackLocation(irp);
@@ -368,6 +368,7 @@ wfastcall NTSTATUS WIN_FUNC(IofCallDriver,2)
 wfastcall void WIN_FUNC(IofCompleteRequest,2)
 	(struct irp *irp, CHAR prio_boost)
 {
+	struct io_stack_location *irp_sl;
 
 #ifdef IO_DEBUG
 	DUMP_IRP(irp);
@@ -375,17 +376,17 @@ wfastcall void WIN_FUNC(IofCompleteRequest,2)
 		ERROR("invalid irp: %p, STATUS_PENDING", irp);
 		return;
 	}
-	if (irp->current_location < 0) {
+	if (irp->current_location < 0 ||
+	    irp->current_location >= irp->stack_count) {
 		ERROR("invalid irp: %p, %d", irp, irp->current_location);
 		return;
 	}
 #endif
-	while (irp->current_location < irp->stack_count) {
-		struct io_stack_location *irp_sl;
+	for (irp_sl = IoGetCurrentIrpStackLocation(irp);
+	     irp->current_location < irp->stack_count; irp_sl++) {
 		struct device_object *dev_obj;
 		NTSTATUS status;
 
-		irp_sl = IoGetCurrentIrpStackLocation(irp);
 		DUMP_IRP(irp);
 		if (irp_sl->control & SL_PENDING_RETURNED)
 			irp->pending_returned = TRUE;
@@ -396,7 +397,6 @@ wfastcall void WIN_FUNC(IofCompleteRequest,2)
 		 * is what we are going to call below; so we set
 		 * current_location and dev_obj for the previous
 		 * (higher) location */
-
 		IoSkipCurrentIrpStackLocation(irp);
 		if (irp->current_location < irp->stack_count)
 			dev_obj = IoGetCurrentIrpStackLocation(irp)->dev_obj;
