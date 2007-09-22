@@ -1,8 +1,11 @@
-ndiswrapper (1.48-1) UNRELEASED; urgency=low
+ndiswrapper (1.48-1) unstable; urgency=low
 
-  * (NOT RELEASED YET) New upstream release
+  * New upstream release.
+  * Use Homepage: field of debian control instead of pseudo standard with
+    double spacing and paragraph break for each binary package.
+  * Drop debian/patches/kbuild-only.patch, applied upstream.
 
- -- Kel Modderman <kel@otaku42.de>  Fri, 21 Sep 2007 11:03:39 +1000
+ -- Kel Modderman <kel@otaku42.de>  Sat, 22 Sep 2007 17:29:02 +1000
 
 ndiswrapper (1.47-3) UNRELEASED; urgency=low
 
