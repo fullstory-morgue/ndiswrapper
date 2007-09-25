@@ -4,15 +4,10 @@ ndiswrapper (1.48-1) unstable; urgency=low
   * Use Homepage: field of debian control instead of pseudo standard with
     double spacing and paragraph break for each binary package.
   * Drop debian/patches/kbuild-only.patch, applied upstream.
-
- -- Kel Modderman <kel@otaku42.de>  Sat, 22 Sep 2007 17:29:02 +1000
-
-ndiswrapper (1.47-3) UNRELEASED; urgency=low
-
   * Fix DIST_DESTDIR target in debian/rules.modules to prevent installation of
-    module to "odd" path.
+    module to "odd" path. (Closes: #395081)
 
- -- Kel Modderman <kel@otaku42.de>  Fri, 24 Aug 2007 07:47:38 +1000
+ -- Kel Modderman <kel@otaku42.de>  Wed, 26 Sep 2007 07:35:00 +1000
 
 ndiswrapper (1.47-2) unstable; urgency=low
 
