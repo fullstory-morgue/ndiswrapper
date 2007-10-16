@@ -1,13 +1,18 @@
-ndiswrapper (1.48-1) unstable; urgency=low
+ndiswrapper (1.49~rc4-1) UNRELEASED; urgency=low
 
-  * New upstream release.
+  * (NOT RELEASED YET) New upstream release
+  * Support for Linux 2.6.23. (Closes: #446359)
   * Use Homepage: field of debian control instead of pseudo standard with
     double spacing and paragraph break for each binary package.
   * Drop debian/patches/kbuild-only.patch, applied upstream.
   * Fix DIST_DESTDIR target in debian/rules.modules to prevent installation of
     module to "odd" path. (Closes: #395081)
+  * Add Vcs debian/control tokens to reflect current maintenance archive.
+  * Extended description no longer states that full kernel source is required
+    to compile this module. It also capitalizes "linux". (Closes: #420688)
+  * Recommend wireless-tools. (Closes: #444613)
 
- -- Kel Modderman <kel@otaku42.de>  Wed, 26 Sep 2007 07:35:00 +1000
+ -- Kel Modderman <kel@otaku42.de>  Tue, 16 Oct 2007 16:07:24 +1000
 
 ndiswrapper (1.47-2) unstable; urgency=low
 

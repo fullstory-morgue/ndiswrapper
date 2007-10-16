@@ -5,7 +5,9 @@ Maintainer: Kel Modderman <kel@otaku42.de>
 Uploaders: Andres Salomon <dilinger@debian.org>
 Standards-Version: 3.7.2
 Build-Depends: debhelper (>= 5.0.37), cdbs, bzip2
-XS-Homepage: http://ndiswrapper.sourceforge.net/
+Vcs-Svn: svn://svn.berlios.de/fullstory/ndiswrapper/trunk
+Vcs-Browser: http://svn.berlios.de/wsvn/fullstory/ndiswrapper/trunk/
+Homepage: http://ndiswrapper.sourceforge.net/
 
 Package: ndiswrapper-common
 Architecture: all

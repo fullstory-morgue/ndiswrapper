@@ -109,16 +109,14 @@ ifdef WORK_DEBUG
 CFLAGS += -DWORK_DEBUG
 endif
 
-# if ALLOC_DEGUG=1 is defined, memory leak information is printed
-#if ALLOC_DEBUG=2, details about individual allocations leaking is printed
-#if ALLOC_DEBUG=3, tags in ExAllocatePoolWithTag leaking printed
+# to debug memory allocation issues
 ifdef ALLOC_DEBUG
 CFLAGS += -DALLOC_DEBUG=$(ALLOC_DEBUG)
 endif
 
-# don't complain if using this option breaks your skull and such
-ifdef WARP_PREEMPT
-CFLAGS += -DWARP_PREEMPT
+# emulate (pseudo) preemption
+ifdef WRAP_PREEMPT
+CFLAGS += -DWRAP_PREEMPT
 endif
 
 .PHONY: prereq_check gen_exports clean dist_clean install stack_check
@@ -242,9 +240,9 @@ endif
 		echo "#ifdef CONFIG_X86_64"; \
 		sed -n \
 			-e 's/.*WIN_FUNC(\([^\,]\+\) *\, *\([0-9]\+\)).*/\
-			   WIN_FUNC_DECL(\1, \2);/p' \
+			   WIN_FUNC_DECL(\1, \2)/p' \
 			-e 's/.*WIN_FUNC_PTR(\([^\,]\+\) *\, *\([0-9]\+\)).*/\
-			   WIN_FUNC_DECL(\1, \2);/p' \
+			   WIN_FUNC_DECL(\1, \2)/p' \
 		   $< | sed -e 's/[ \t	]\+//' | sort -u; \
 		echo "#endif"; \
 		echo "struct wrap_export $(basename $<)_exports[] = {";\
