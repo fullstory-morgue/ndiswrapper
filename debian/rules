@@ -22,7 +22,7 @@ install/ndiswrapper-source::
 	install driver/Makefile driver/*.[chS] debian/tmp/modules/ndiswrapper/
 	
 	# Prepare the debian source tarball
-	tar jcf debian/ndiswrapper-source/usr/src/ndiswrapper-source.tar.bz2 \
+	tar jcf debian/ndiswrapper-source/usr/src/ndiswrapper.tar.bz2 \
 		-C debian/tmp modules
 
 install/ndiswrapper-utils-1.9::
