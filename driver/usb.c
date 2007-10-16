@@ -127,7 +127,7 @@ static void usb_kill_urb(struct urb *urb)
 #endif
 
 static struct nt_list wrap_urb_complete_list;
-static NT_SPIN_LOCK wrap_urb_complete_list_lock;
+static spinlock_t wrap_urb_complete_list_lock;
 
 static work_struct_t wrap_urb_complete_work;
 static void wrap_urb_complete_worker(worker_param_t dummy);
@@ -275,7 +275,7 @@ wstdcall void wrap_cancel_irp(struct device_object *dev_obj, struct irp *irp)
 	IoReleaseCancelSpinLock(irp->cancel_irql);
 	return;
 }
-WIN_FUNC_DECL(wrap_cancel_irp,2);
+WIN_FUNC_DECL(wrap_cancel_irp,2)
 
 static struct urb *wrap_alloc_urb(struct irp *irp, unsigned int pipe,
 				  void *buf, unsigned int buf_len)
@@ -416,9 +416,9 @@ static void int_urb_unlink_complete(struct urb *urb)
 	if (xchg(&wrap_urb->state, URB_INT_UNLINKED) != URB_COMPLETED)
 		return;
 	urb->status = URB_STATUS(wrap_urb);
-	nt_spin_lock(&wrap_urb_complete_list_lock);
+	spin_lock(&wrap_urb_complete_list_lock);
 	InsertTailList(&wrap_urb_complete_list, &wrap_urb->complete_list);
-	nt_spin_unlock(&wrap_urb_complete_list_lock);
+	spin_unlock(&wrap_urb_complete_list_lock);
 	schedule_ntos_work(&wrap_urb_complete_work);
 }
 
@@ -454,9 +454,9 @@ static void wrap_urb_complete(struct urb *urb ISR_PT_REGS_PARAM_DECL)
 		return;
 	}
 #endif
-	nt_spin_lock(&wrap_urb_complete_list_lock);
+	spin_lock(&wrap_urb_complete_list_lock);
 	InsertTailList(&wrap_urb_complete_list, &wrap_urb->complete_list);
-	nt_spin_unlock(&wrap_urb_complete_list_lock);
+	spin_unlock(&wrap_urb_complete_list_lock);
 	schedule_ntos_work(&wrap_urb_complete_work);
 	USBTRACE("scheduled worker for urb %p", urb);
 }
@@ -472,13 +472,12 @@ static void wrap_urb_complete_worker(worker_param_t dummy)
 	struct wrap_urb *wrap_urb;
 	struct nt_list *ent;
 	unsigned long flags;
-	KIRQL irql;
 
 	USBENTER("");
 	while (1) {
-		nt_spin_lock_irqsave(&wrap_urb_complete_list_lock, flags);
+		spin_lock_irqsave(&wrap_urb_complete_list_lock, flags);
 		ent = RemoveHeadList(&wrap_urb_complete_list);
-		nt_spin_unlock_irqrestore(&wrap_urb_complete_list_lock, flags);
+		spin_unlock_irqrestore(&wrap_urb_complete_list_lock, flags);
 		if (!ent)
 			break;
 		wrap_urb = container_of(ent, struct wrap_urb, complete_list);
@@ -541,9 +540,7 @@ static void wrap_urb_complete_worker(worker_param_t dummy)
 			break;
 		}
 		wrap_free_urb(urb);
-		irql = raise_irql(DISPATCH_LEVEL);
 		IoCompleteRequest(irp, IO_NO_INCREMENT);
-		lower_irql(irql);
 	}
 	USBEXIT(return);
 }
@@ -1528,7 +1525,7 @@ USBD_InterfaceLogEntry(void *context, ULONG driver_tag, ULONG enum_tag,
 int usb_init(void)
 {
 	InitializeListHead(&wrap_urb_complete_list);
-	nt_spin_lock_init(&wrap_urb_complete_list_lock);
+	spin_lock_init(&wrap_urb_complete_list_lock);
 	initialize_work(&wrap_urb_complete_work, wrap_urb_complete_worker, NULL);
 #ifdef USB_DEBUG
 	urb_id = 0;
