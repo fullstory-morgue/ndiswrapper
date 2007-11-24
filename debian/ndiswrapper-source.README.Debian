@@ -3,8 +3,8 @@ ndiswrapper for Debian
 
 This package provides the ndiswrapper source code and binaries that can be used
 to build modules that work with your custom built linux kernel. The source
-files are located in /usr/src/ndiswrapper-source.tar.bz2; unpacking that file
-in /usr/src will produce a build tree in /usr/src/modules/ndiswrapper/
+files are located in /usr/src/ndiswrapper.tar.bz2; unpacking that file in
+/usr/src will produce a build tree in /usr/src/modules/ndiswrapper/
 (The tar file can also be unpacked elsewhere).
 
 Building ndiswrapper kernel modules with module-assistant
@@ -29,7 +29,7 @@ If necessary, prepare the kernel source tree for the target kernel. If you are
 using a self compiled kernel than you have an easy task!
 
   $ cd /usr/src
-  $ tar jxvf ndiswrapper-source.tar.bz2
+  $ tar jxvf ndiswrapper.tar.bz2
   $ cd linux-$KVERS
   $ make-kpkg --added-modules ndiswrapper modules
 
