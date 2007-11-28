@@ -525,9 +525,8 @@ wstdcall void WIN_FUNC(NdisWriteConfiguration,4)
 		}
 	}
 	up(&loader_mutex);
-	setting = kmalloc(sizeof(*setting), GFP_KERNEL);
+	setting = kzalloc(sizeof(*setting), GFP_KERNEL);
 	if (setting) {
-		memset(setting, 0, sizeof(*setting));
 		if (ansi.length == ansi.max_length)
 			ansi.length--;
 		memcpy(setting->name, keyname, ansi.length);
@@ -548,6 +547,56 @@ wstdcall void WIN_FUNC(NdisWriteConfiguration,4)
 	EXIT2(return);
 }
 
+wstdcall void WIN_FUNC(NdisReadNetworkAddress,4)
+	(NDIS_STATUS *status, void **addr, UINT *len,
+	 struct ndis_mp_block *nmb)
+{
+	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_configuration_parameter *param;
+	struct unicode_string key;
+	struct ansi_string ansi;
+	typeof(wnd->mac) mac;
+	int i, ret;
+
+	ENTER2("%p", nmb);
+	RtlInitAnsiString(&ansi, "NetworkAddress");
+	*status = NDIS_STATUS_FAILURE;
+	if (RtlAnsiStringToUnicodeString(&key, &ansi, TRUE) != STATUS_SUCCESS)
+		EXIT1(return);
+
+	NdisReadConfiguration(&ret, &param, nmb, &key, NdisParameterString);
+	RtlFreeUnicodeString(&key);
+	if (ret != NDIS_STATUS_SUCCESS)
+		EXIT1(return);
+	ret = RtlUnicodeStringToAnsiString(&ansi, &param->data.string, TRUE);
+	if (ret != STATUS_SUCCESS)
+		EXIT1(return);
+
+	i = 0;
+	if (ansi.length >= 2 * sizeof(mac)) {
+		for (i = 0; i < sizeof(mac); i++) {
+			char c[3];
+			int x;
+			c[0] = ansi.buf[i*2];
+			c[1] = ansi.buf[i*2+1];
+			c[2] = 0;
+			ret = sscanf(c, "%x", &x);
+			if (ret != 1)
+				break;
+			mac[i] = x;
+		}
+	}
+	TRACE2("%s, %d, " MACSTR, ansi.buf, i, MAC2STR(mac));
+	RtlFreeAnsiString(&ansi);
+	if (i == sizeof(mac)) {
+		memcpy(wnd->mac, mac, sizeof(wnd->mac));
+		*len = sizeof(mac);
+		*addr = wnd->mac;
+		*status = NDIS_STATUS_SUCCESS;
+	}
+	EXIT1(return);
+}
+
 wstdcall void WIN_FUNC(NdisInitializeString,2)
 	(struct unicode_string *dest, UCHAR *src)
 {
@@ -559,6 +608,7 @@ wstdcall void WIN_FUNC(NdisInitializeString,2)
 		dest->buf = NULL;
 	} else {
 		RtlInitAnsiString(&ansi, src);
+		/* the string is freed with NdisFreeMemory */
 		RtlAnsiStringToUnicodeString(dest, &ansi, TRUE);
 	}
 	EXIT2(return);
@@ -1786,47 +1836,6 @@ wstdcall void WIN_FUNC(NdisCancelTimer,2)
 	TIMEREXIT(return);
 }
 
-wstdcall void WIN_FUNC(NdisReadNetworkAddress,4)
-	(NDIS_STATUS *status, void **addr, UINT *len,
-	 struct ndis_mp_block *nmb)
-{
-	struct wrap_ndis_device *wnd = nmb->wnd;
-	struct ndis_configuration_parameter *param;
-	struct unicode_string key;
-	struct ansi_string ansi;
-	int int_mac[ETH_ALEN];
-	int ret;
-
-	ENTER2("%p", nmb);
-	RtlInitAnsiString(&ansi, "NetworkAddress");
-	*len = 0;
-	*status = NDIS_STATUS_FAILURE;
-	if (RtlAnsiStringToUnicodeString(&key, &ansi, TRUE) != STATUS_SUCCESS)
-		EXIT1(return);
-
-	NdisReadConfiguration(status, &param, nmb, &key, NdisParameterString);
-	RtlFreeUnicodeString(&key);
-	if (*status != NDIS_STATUS_SUCCESS)
-		EXIT1(return);
-	ret = RtlUnicodeStringToAnsiString(&ansi, &param->data.string, TRUE);
-	if (ret != STATUS_SUCCESS)
-		EXIT1(return);
-
-	ret = sscanf(ansi.buf, MACSTR, MACINTADR(int_mac));
-	RtlFreeAnsiString(&ansi);
-	if (ret == ETH_ALEN) {
-		int i;
-		for (i = 0; i < ETH_ALEN; i++)
-			wnd->mac[i] = int_mac[i];
-		printk(KERN_INFO "%s: %s ethernet device " MACSTRSEP "\n",
-		       wnd->net_dev->name, DRIVER_NAME, MAC2STR(wnd->mac));
-		*len = ETH_ALEN;
-		*addr = wnd->mac;
-		*status = NDIS_STATUS_SUCCESS;
-	}
-	EXIT1(return);
-}
-
 wstdcall void WIN_FUNC(NdisMRegisterAdapterShutdownHandler,3)
 	(struct ndis_mp_block *nmb, void *ctx, void *func)
 {
@@ -2506,12 +2515,13 @@ wstdcall void NdisMQueryInformationComplete(struct ndis_mp_block *nmb,
 					    NDIS_STATUS status)
 {
 	struct wrap_ndis_device *wnd = nmb->wnd;
+	typeof(wnd->ndis_req_task) task;
 
 	ENTER2("nmb: %p, wnd: %p, %08X", nmb, wnd, status);
 	wnd->ndis_req_status = status;
 	wnd->ndis_req_done = 1;
-	if (wnd->ndis_req_task)
-		wake_up_process(wnd->ndis_req_task);
+	if ((task = xchg(&wnd->ndis_req_task, NULL)))
+		wake_up_process(task);
 	else
 		WARNING("invalid task");
 	EXIT2(return);
@@ -2522,12 +2532,13 @@ wstdcall void NdisMSetInformationComplete(struct ndis_mp_block *nmb,
 					  NDIS_STATUS status)
 {
 	struct wrap_ndis_device *wnd = nmb->wnd;
+	typeof(wnd->ndis_req_task) task;
 
 	ENTER2("status = %08X", status);
 	wnd->ndis_req_status = status;
 	wnd->ndis_req_done = 1;
-	if (wnd->ndis_req_task)
-		wake_up_process(wnd->ndis_req_task);
+	if ((task = xchg(&wnd->ndis_req_task, NULL)))
+		wake_up_process(task);
 	else
 		WARNING("invalid task");
 	EXIT2(return);
@@ -2538,12 +2549,13 @@ wstdcall void NdisMResetComplete(struct ndis_mp_block *nmb,
 				 NDIS_STATUS status, BOOLEAN address_reset)
 {
 	struct wrap_ndis_device *wnd = nmb->wnd;
+	typeof(wnd->ndis_req_task) task;
 
 	ENTER2("status: %08X, %u", status, address_reset);
 	wnd->ndis_req_status = status;
 	wnd->ndis_req_done = address_reset + 1;
-	if (wnd->ndis_req_task)
-		wake_up_process(wnd->ndis_req_task);
+	if ((task = xchg(&wnd->ndis_req_task, NULL)))
+		wake_up_process(task);
 	else
 		WARNING("invalid task");
 	EXIT2(return);
@@ -2832,12 +2844,13 @@ wstdcall void WIN_FUNC(NdisMCoRequestComplete,3)
 	 struct ndis_request *ndis_request)
 {
 	struct wrap_ndis_device *wnd = nmb->wnd;
+	typeof(wnd->ndis_req_task) task;
 
 	ENTER3("%08X", status);
 	wnd->ndis_req_status = status;
 	wnd->ndis_req_done = 1;
-	if (wnd->ndis_req_task)
-		wake_up_process(wnd->ndis_req_task);
+	if ((task = xchg(&wnd->ndis_req_task, NULL)))
+		wake_up_process(task);
 	else
 		WARNING("invalid task");
 	EXIT3(return);

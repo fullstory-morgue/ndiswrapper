@@ -398,20 +398,22 @@ static int ndis_set_mac_address(struct net_device *dev, void *p)
 	TRACE1("new mac: %s", mac_string);
 
 	RtlInitAnsiString(&ansi, mac_string);
-	if (RtlAnsiStringToUnicodeString(&param.data.string, &ansi, TRUE)) {
-		RtlFreeUnicodeString(&key);
+	if (RtlAnsiStringToUnicodeString(&param.data.string, &ansi,
+					 TRUE) != STATUS_SUCCESS)
 		EXIT1(return -EINVAL);
-	}
+
 	param.type = NdisParameterString;
 	RtlInitAnsiString(&ansi, "NetworkAddress");
-	if (RtlAnsiStringToUnicodeString(&key, &ansi, TRUE))
+	if (RtlAnsiStringToUnicodeString(&key, &ansi, TRUE) != STATUS_SUCCESS) {
+		RtlFreeUnicodeString(&param.data.string);
 		EXIT1(return -EINVAL);
+	}
 	NdisWriteConfiguration(&res, wnd->nmb, &key, &param);
 	RtlFreeUnicodeString(&key);
 	RtlFreeUnicodeString(&param.data.string);
 
 	if (res != NDIS_STATUS_SUCCESS)
-		EXIT1(return -EINVAL);
+		EXIT1(return -EFAULT);
 	if (ndis_reinit(wnd) == NDIS_STATUS_SUCCESS) {
 		res = mp_query(wnd, OID_802_3_CURRENT_ADDRESS,
 			       mac, sizeof(mac));
@@ -971,10 +973,6 @@ static void link_status_on(struct wrap_ndis_device *wnd)
 	union iwreq_data wrqu;
 	NDIS_STATUS res;
 	const int assoc_size = sizeof(*ndis_assoc_info) + IW_CUSTOM_MAX + 32;
-#if WIRELESS_EXT <= 17
-	unsigned char *wpa_assoc_info, *ies;
-	unsigned char *p;
-#endif
 #endif
 
 	ENTER2("");
@@ -1008,41 +1006,6 @@ static void link_status_on(struct wrap_ndis_device *wnd)
 				    ((char *)ndis_assoc_info) +
 				    ndis_assoc_info->offset_resp_ies);
 	}
-#else
-	/* we need 28 extra bytes for the format strings */
-	if ((ndis_assoc_info->req_ie_length +
-	     ndis_assoc_info->resp_ie_length + 28) > IW_CUSTOM_MAX) {
-		WARNING("information element is too long! (%u,%u),"
-			"association information dropped",
-			ndis_assoc_info->req_ie_length,
-			ndis_assoc_info->resp_ie_length);
-		kfree(ndis_assoc_info);
-		goto send_assoc_event;
-	}
-
-	wpa_assoc_info = kmalloc(IW_CUSTOM_MAX, GFP_KERNEL);
-	if (!wpa_assoc_info) {
-		ERROR("couldn't allocate memory");
-		kfree(ndis_assoc_info);
-		goto send_assoc_event;
-	}
-	p = wpa_assoc_info;
-	p += sprintf(p, "ASSOCINFO(ReqIEs=");
-	memcpy(p, ((char *)ndis_assoc_info) + ndis_assoc_info->offset_req_ies,
-	       ndis_assoc_info->req_ie_length);
-	p += ndis_assoc_info->req_ie_length;
-
-	p += sprintf(p, " RespIEs=");
-	memcpy(p, ((char *)ndis_assoc_info) + ndis_assoc_info->offset_resp_ies,
-	       ndis_assoc_info->resp_ie_length);
-	p += ndis_assoc_info->resp_ie_length;
-
-	p += sprintf(p, ")");
-
-	wrqu.data.length = p - wpa_assoc_info;
-	wireless_send_event(wnd->net_dev, IWEVCUSTOM, &wrqu, wpa_assoc_info);
-
-	kfree(wpa_assoc_info);
 #endif
 	kfree(ndis_assoc_info);
 
@@ -1131,9 +1094,6 @@ static void wrap_ndis_worker(worker_param_t param)
 
 	wnd = worker_param_data(param, struct wrap_ndis_device, wrap_ndis_work);
 	WORKTRACE("0x%lx", wnd->wrap_ndis_pending_work);
-
-	if (test_bit(SHUTDOWN, &wnd->wrap_ndis_pending_work))
-		WORKEXIT(return);
 
 	if (test_and_clear_bit(NETIF_WAKEQ, &wnd->wrap_ndis_pending_work)) {
 		netif_tx_lock_bh(wnd->net_dev);
@@ -1770,9 +1730,9 @@ static NDIS_STATUS wrap_ndis_start_device(struct wrap_ndis_device *wnd)
 	net_dev = wnd->net_dev;
 
 	get_supported_oids(wnd);
+	memset(mac, 0, sizeof(mac));
 	status = mp_query(wnd, OID_802_3_CURRENT_ADDRESS, mac, sizeof(mac));
-	if (status != NDIS_STATUS_SUCCESS ||
-	    memcmp(mac, "\x00\x00\x00\x00\x00\x00", sizeof(mac)) == 0) {
+	if (memcmp(mac, "\x00\x00\x00\x00\x00\x00", sizeof(mac)) == 0) {
 		status = mp_query(wnd, OID_802_3_PERMANENT_ADDRESS, mac,
 				  sizeof(mac));
 		if (status != NDIS_STATUS_SUCCESS) {
@@ -1781,10 +1741,10 @@ static NDIS_STATUS wrap_ndis_start_device(struct wrap_ndis_device *wnd)
 		}
 	}
 	TRACE1("mac:" MACSTRSEP, MAC2STR(mac));
-	memcpy(&net_dev->dev_addr, mac, ETH_ALEN);
+	memcpy(net_dev->dev_addr, mac, ETH_ALEN);
 
 	strncpy(net_dev->name, if_name, IFNAMSIZ - 1);
-	net_dev->name[IFNAMSIZ - 1] = '\0';
+	net_dev->name[IFNAMSIZ - 1] = 0;
 
 	wnd->packet_filter = NDIS_PACKET_TYPE_DIRECTED |
 		NDIS_PACKET_TYPE_BROADCAST | NDIS_PACKET_TYPE_MULTICAST;
@@ -1952,7 +1912,6 @@ static int wrap_ndis_remove_device(struct wrap_ndis_device *wnd)
 
 	/* prevent setting essid during disassociation */
 	memset(&wnd->essid, 0, sizeof(wnd->essid));
-	set_bit(SHUTDOWN, &wnd->wrap_ndis_pending_work);
 	wnd->tx_ok = 0;
 	if (wnd->max_tx_packets)
 		unregister_netdev(wnd->net_dev);
@@ -1968,13 +1927,12 @@ static int wrap_ndis_remove_device(struct wrap_ndis_device *wnd)
 		tx_pending = TX_RING_SIZE - 1;
 	wnd->is_tx_ring_full = 0;
 	/* throw away pending packets */
-	while (tx_pending > 0) {
+	while (tx_pending-- > 0) {
 		struct ndis_packet *packet;
 
 		packet = wnd->tx_ring[wnd->tx_ring_start];
 		free_tx_packet(wnd, packet, NDIS_STATUS_CLOSING);
 		wnd->tx_ring_start = (wnd->tx_ring_start + 1) % TX_RING_SIZE;
-		tx_pending--;
 	}
 	spin_unlock_bh(&wnd->tx_ring_lock);
 	up(&wnd->tx_ring_mutex);
@@ -2022,7 +1980,6 @@ static wstdcall NTSTATUS NdisAddDevice(struct driver_object *drv_obj,
 	}
 	wd = pdo->reserved;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-	SET_MODULE_OWNER(net_dev);
 	if (wrap_is_pci_bus(wd->dev_bus))
 		SET_NETDEV_DEV(net_dev, &wd->pci.pdev->dev);
 	if (wrap_is_usb_bus(wd->dev_bus))

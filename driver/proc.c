@@ -357,6 +357,33 @@ static int procfs_write_ndis_settings(struct file *file, const char *buf,
 		res = mp_set_int(wnd, OID_GEN_CURRENT_PACKET_FILTER, i);
 		if (res)
 			WARNING("setting packet_filter failed: %08X", res);
+	} else if (!strcmp(setting, "reinit")) {
+		if (ndis_reinit(wnd) != NDIS_STATUS_SUCCESS)
+			return -EFAULT;
+	} else {
+		struct ndis_configuration_parameter param;
+		struct unicode_string key;
+		struct ansi_string ansi;
+
+		if (!p)
+			return -EINVAL;
+		p++;
+		RtlInitAnsiString(&ansi, p);
+		if (RtlAnsiStringToUnicodeString(&param.data.string, &ansi,
+						 TRUE) != STATUS_SUCCESS)
+			EXIT1(return -EFAULT);
+		param.type = NdisParameterString;
+		RtlInitAnsiString(&ansi, setting);
+		if (RtlAnsiStringToUnicodeString(&key, &ansi,
+						 TRUE) != STATUS_SUCCESS) {
+			RtlFreeUnicodeString(&param.data.string);
+			EXIT1(return -EINVAL);
+		}
+		NdisWriteConfiguration(&res, wnd->nmb, &key, &param);
+		RtlFreeUnicodeString(&key);
+		RtlFreeUnicodeString(&param.data.string);
+		if (res != NDIS_STATUS_SUCCESS)
+			return -EFAULT;
 	}
 	return count;
 }
@@ -508,7 +535,7 @@ int wrap_procfs_init(void)
 {
 	struct proc_dir_entry *procfs_entry;
 
-	wrap_procfs_entry = proc_mkdir(DRIVER_NAME, proc_net);
+	wrap_procfs_entry = proc_mkdir(DRIVER_NAME, proc_net_root);
 	if (wrap_procfs_entry == NULL) {
 		ERROR("couldn't create procfs directory");
 		return -ENOMEM;
@@ -535,5 +562,5 @@ void wrap_procfs_remove(void)
 	if (wrap_procfs_entry == NULL)
 		return;
 	remove_proc_entry("debug", wrap_procfs_entry);
-	remove_proc_entry(DRIVER_NAME, proc_net);
+	remove_proc_entry(DRIVER_NAME, proc_net_root);
 }
