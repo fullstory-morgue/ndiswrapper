@@ -1,11 +1,11 @@
-ndiswrapper (1.50-1) UNRELEASED; urgency=low
+ndiswrapper (1.50-1) unstable; urgency=low
 
   * New upstream release.
   * Fix tarball name in README.Debian,
     s/ndiswrapper-source.tar.bz2/ndiswrapper.tar.bz2/.
   * Use relative dirname in debian/ndiswrapper-source.dirs
 
- -- Kel Modderman <kel@otaku42.de>  Wed, 28 Nov 2007 20:09:26 +1000
+ -- Kel Modderman <kel@otaku42.de>  Fri, 30 Nov 2007 22:15:20 +1000
 
 ndiswrapper (1.49-1) unstable; urgency=low
 
