@@ -1,10 +1,15 @@
-ndiswrapper (1.51-1) UNRELEASED; urgency=low
+ndiswrapper (1.52-1) UNRELEASED; urgency=low
 
-  * NOT RELEASED YET
+  * (NOT RELEASED YET) New upstream release
+
+ -- Kel Modderman <kel@otaku42.de>  Mon, 04 Feb 2008 14:27:33 +1000
+
+ndiswrapper (1.51-1) unstable; urgency=low
+
   * New upstream release
   * update standards version to 3.7.3, no changes necessary.
 
- -- Stefan Lippers-Hollmann <s.l-h@gmx.de>  Tue, 18 Dec 2007 11:24:27 +0100
+ -- Kel Modderman <kel@otaku42.de>  Sun, 23 Dec 2007 00:20:49 +1000
 
 ndiswrapper (1.50-1) unstable; urgency=low
 

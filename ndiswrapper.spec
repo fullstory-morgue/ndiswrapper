@@ -1,5 +1,5 @@
 # Define ndiswrapper_version only if it is not already defined.
-%{!?ndiswrapper_version: %define ndiswrapper_version 1.51}
+%{!?ndiswrapper_version: %define ndiswrapper_version 1.52}
 %{!?ndiswrapper_release: %define ndiswrapper_release 1}
 
 # Define kernel version if not already defined
