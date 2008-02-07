@@ -70,7 +70,6 @@ binary-indep: build-indep install-indep
 	dh_installman -i
 	dh_installdocs -i
 	dh_installchangelogs -i ChangeLog
-	dh_link -i
 	dh_compress -i
 	dh_fixperms -i
 	dh_installdeb -i
