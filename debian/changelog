@@ -1,8 +1,15 @@
 ndiswrapper (1.52-1) UNRELEASED; urgency=low
 
-  * (NOT RELEASED YET) New upstream release
+  * New upstream release.
+  * Rewrite debian/rules as a debhelper-cetric Makefile, rather than a cdbs
+    dependent Makefile fragment. [debian/control, debian/rules]
+  * Depend on quilt in case patches are required in the future.
+    [debian/control, debian/rules]
+  * Drop spurious dependencies of 'gcc' for ndiswrapper-source,
+    '${perl:Depends}' for ndiswrapper-utils-1.9 and '${shlibs:Depends},
+    ${perl:Depends}' for ndiswrapper-common. They were never used.
 
- -- Kel Modderman <kel@otaku42.de>  Mon, 04 Feb 2008 14:27:33 +1000
+ -- Kel Modderman <kel@otaku42.de>  Thu, 07 Feb 2008 21:30:23 +1000
 
 ndiswrapper (1.51-1) unstable; urgency=low
 

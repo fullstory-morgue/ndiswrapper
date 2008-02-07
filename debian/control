@@ -4,14 +4,14 @@ Priority: optional
 Maintainer: Kel Modderman <kel@otaku42.de>
 Uploaders: Andres Salomon <dilinger@debian.org>
 Standards-Version: 3.7.3
-Build-Depends: debhelper (>= 5.0.37), cdbs, bzip2
+Build-Depends: debhelper (>= 5.0.37), bzip2, quilt
 Vcs-Svn: svn://svn.berlios.de/fullstory/ndiswrapper/trunk
 Vcs-Browser: http://svn.berlios.de/wsvn/fullstory/ndiswrapper/trunk/
 Homepage: http://ndiswrapper.sourceforge.net/
 
 Package: ndiswrapper-common
 Architecture: all
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}
+Depends: ${misc:Depends}
 Replaces: ndiswrapper-utils
 Suggests: ndiswrapper-source
 Description: Common scripts required to use the utilities for ndiswrapper
@@ -27,7 +27,7 @@ Description: Common scripts required to use the utilities for ndiswrapper
 
 Package: ndiswrapper-utils-1.9
 Architecture: i386 amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}, ndiswrapper-common
+Depends: ${shlibs:Depends}, ${misc:Depends}, ndiswrapper-common
 Suggests: ndiswrapper-source
 Description: Userspace utilities for the ndiswrapper Linux kernel module
  Some vendors do not release specifications of the hardware or provide a
@@ -42,7 +42,7 @@ Description: Userspace utilities for the ndiswrapper Linux kernel module
 
 Package: ndiswrapper-source
 Architecture: all
-Depends: module-assistant, debhelper (>= 5.0.37), bzip2, gcc
+Depends: module-assistant, debhelper (>= 5.0.37), bzip2
 Suggests: kernel-package
 Description: Source for the ndiswrapper Linux kernel module
  Some vendors do not release specifications of the hardware or provide a
