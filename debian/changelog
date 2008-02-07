@@ -1,4 +1,4 @@
-ndiswrapper (1.52-1) UNRELEASED; urgency=low
+ndiswrapper (1.52-1) unstable; urgency=low
 
   * New upstream release.
   * Rewrite debian/rules as a debhelper-cetric Makefile, rather than a cdbs
@@ -9,7 +9,7 @@ ndiswrapper (1.52-1) UNRELEASED; urgency=low
     '${perl:Depends}' for ndiswrapper-utils-1.9 and '${shlibs:Depends},
     ${perl:Depends}' for ndiswrapper-common. They were never used.
 
- -- Kel Modderman <kel@otaku42.de>  Thu, 07 Feb 2008 21:30:23 +1000
+ -- Kel Modderman <kel@otaku42.de>  Thu, 07 Feb 2008 23:15:29 +1000
 
 ndiswrapper (1.51-1) unstable; urgency=low
 
