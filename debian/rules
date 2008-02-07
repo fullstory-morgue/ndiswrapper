@@ -3,23 +3,26 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-include /usr/share/quilt/quilt.make
+#include /usr/share/quilt/quilt.make
 
 build: build-indep build-arch
 
 build-indep: build-indep-stamp
-build-indep-stamp: $(QUILT_STAMPFN)
+#build-indep-stamp: $(QUILT_STAMPFN)
+build-indep-stamp:
 	touch $@
 
 build-arch: build-arch-stamp
-build-arch-stamp: $(QUILT_STAMPFN)
+#build-arch-stamp: $(QUILT_STAMPFN)
+build-arch-stamp:
 	dh_testdir
 	
 	$(MAKE) -C utils
 	
 	touch $@
 
-clean: unpatch
+#clean: unpatch
+clean:
 	dh_testdir
 	dh_testroot
 	
