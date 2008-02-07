@@ -5,8 +5,15 @@
 
 include /usr/share/quilt/quilt.make
 
-build: build-stamp
+build: build-stamp build-arch build-indep 
 build-stamp: $(QUILT_STAMPFN)
+
+build-indep: build-indep-stamp
+build-indep-stamp:
+	touch $@
+
+build-arch: build-arch-stamp
+build-arch-stamp:
 	dh_testdir
 	
 	$(MAKE) -C utils
@@ -19,25 +26,17 @@ clean: unpatch
 	
 	$(MAKE) -C utils distclean
 	
-	dh_clean build-stamp install-stamp
+	dh_clean build-stamp build-arch-stamp build-indep-stamp
 
-install: build install-stamp
-install-stamp:
+install: install-indep install-arch
+
+install-indep:
 	dh_testdir
 	dh_testroot
 	dh_clean -k
+	dh_installdirs -i
+	dh_install -i
 	
-	# ndiswrapper-utils
-	install -D -m755 utils/loadndisdriver \
-		debian/ndiswrapper-utils-1.9/sbin/loadndisdriver-1.9
-	install -D -m755 utils/ndiswrapper \
-		debian/ndiswrapper-utils-1.9/usr/sbin/ndiswrapper-1.9
-	install -D -m644 loadndisdriver.8 \
-		debian/ndiswrapper-utils-1.9/usr/share/man/man8/loadndisdriver-1.9.8
-	install -D -m644 ndiswrapper.8 \
-		debian/ndiswrapper-utils-1.9/usr/share/man/man8/ndiswrapper-1.9.8
-	
-	# ndiswrapper-source
 	install -D -m 0755 debian/rules.modules \
 		debian/tmp/modules/ndiswrapper/debian/rules
 	
@@ -52,38 +51,48 @@ install-stamp:
 	tar jcf debian/ndiswrapper-source/usr/src/ndiswrapper.tar.bz2 \
 		-C debian/tmp modules
 	
-	touch $@
-
-binary-arch:
+install-arch:
 	dh_testdir
 	dh_testroot
-	dh_installdirs
-	dh_install
-	dh_installman
-	dh_installdocs
-	dh_installchangelogs ChangeLog
-	dh_strip
-	dh_compress
-	dh_fixperms
-	dh_installdeb
-	dh_shlibdeps
-	dh_gencontrol
-	dh_md5sums
-	dh_builddeb
+	dh_clean -k
+	
+	install -D -m755 utils/loadndisdriver \
+		debian/ndiswrapper-utils-1.9/sbin/loadndisdriver-1.9
+	install -D -m755 utils/ndiswrapper \
+		debian/ndiswrapper-utils-1.9/usr/sbin/ndiswrapper-1.9
+	install -D -m644 loadndisdriver.8 \
+		debian/ndiswrapper-utils-1.9/usr/share/man/man8/loadndisdriver-1.9.8
+	install -D -m644 ndiswrapper.8 \
+		debian/ndiswrapper-utils-1.9/usr/share/man/man8/ndiswrapper-1.9.8
+	
+binary-indep: build-indep install-indep
+	dh_testdir -i
+	dh_testroot -i
+	dh_installman -i
+	dh_installdocs -i
+	dh_installchangelogs -i ChangeLog
+	dh_link -i
+	dh_compress -i
+	dh_fixperms -i
+	dh_installdeb -i
+	dh_gencontrol -i
+	dh_md5sums -i
+	dh_builddeb -i
 
-binary-indep: build install
-	dh_testdir
-	dh_testroot
-	dh_install
-	dh_installdocs
-	dh_installchangelogs ChangeLog
-	dh_link
-	dh_compress
-	dh_fixperms
-	dh_installdeb
-	dh_gencontrol
-	dh_md5sums
-	dh_builddeb
+binary-arch: build-arch install-arch
+	dh_testdir -s
+	dh_testroot -s
+	dh_installman -s
+	dh_installdocs -s
+	dh_installchangelogs -s ChangeLog
+	dh_strip -s 
+	dh_compress -s
+	dh_fixperms -s
+	dh_installdeb -s
+	dh_shlibdeps -s
+	dh_gencontrol -s
+	dh_md5sums -s
+	dh_builddeb -s
 
 binary: binary-indep binary-arch
-.PHONY: build clean install binary-indep binary-arch binary
+.PHONY: build build-indep build-arch clean install install-indep install-arch binary-indep binary-arch binary
