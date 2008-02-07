@@ -32,7 +32,7 @@ install: install-indep install-arch
 install-indep:
 	dh_testdir
 	dh_testroot
-	dh_clean -k
+	dh_clean -k -i
 	dh_installdirs -i
 	dh_install -i
 	
@@ -53,7 +53,7 @@ install-indep:
 install-arch:
 	dh_testdir
 	dh_testroot
-	dh_clean -k
+	dh_clean -k -s
 	
 	install -D -m755 utils/loadndisdriver \
 		debian/ndiswrapper-utils-1.9/sbin/loadndisdriver-1.9
