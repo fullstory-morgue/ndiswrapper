@@ -5,15 +5,14 @@
 
 include /usr/share/quilt/quilt.make
 
-build: build-stamp build-arch build-indep 
-build-stamp: $(QUILT_STAMPFN)
+build: build-indep build-arch
 
 build-indep: build-indep-stamp
-build-indep-stamp:
+build-indep-stamp: $(QUILT_STAMPFN)
 	touch $@
 
 build-arch: build-arch-stamp
-build-arch-stamp:
+build-arch-stamp: $(QUILT_STAMPFN)
 	dh_testdir
 	
 	$(MAKE) -C utils
@@ -26,7 +25,7 @@ clean: unpatch
 	
 	$(MAKE) -C utils distclean
 	
-	dh_clean build-stamp build-arch-stamp build-indep-stamp
+	dh_clean build-arch-stamp build-indep-stamp
 
 install: install-indep install-arch
 
