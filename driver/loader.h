@@ -18,11 +18,15 @@
 
 #include "ndiswrapper.h"
 
+#ifndef __KERNEL__
+#define __user
+#endif
+
 struct load_driver_file {
 	char driver_name[MAX_DRIVER_NAME_LEN];
 	char name[MAX_DRIVER_NAME_LEN];
 	size_t size;
-	void *data;
+	void __user *data;
 };
 
 struct load_device_setting {
@@ -78,6 +82,8 @@ void free_bin_file(struct wrap_bin_file *bin_file);
 void unload_wrap_driver(struct wrap_driver *driver);
 void unload_wrap_device(struct wrap_device *wd);
 struct wrap_device *get_wrap_device(void *dev, int bus_type);
+
+extern struct semaphore loader_mutex;
 #endif
 
 #endif /* LOADER_H */

@@ -41,9 +41,7 @@ struct alloc_info {
 	struct nt_list list;
 	const char *file;
 	int line;
-#if ALLOC_DEBUG > 2
 	ULONG tag;
-#endif
 #endif
 };
 
@@ -69,7 +67,7 @@ void wrapmem_info(void)
 void *slack_kmalloc(size_t size)
 {
 	struct slack_alloc_info *info;
-	unsigned int flags;
+	gfp_t flags;
 
 	ENTER4("size = %lu", (unsigned long)size);
 
@@ -109,7 +107,7 @@ void slack_kfree(void *ptr)
 }
 
 #if defined(ALLOC_DEBUG)
-void *wrap_kmalloc(size_t size, unsigned flags, const char *file, int line)
+void *wrap_kmalloc(size_t size, gfp_t flags, const char *file, int line)
 {
 	struct alloc_info *info;
 
@@ -125,9 +123,7 @@ void *wrap_kmalloc(size_t size, unsigned flags, const char *file, int line)
 #if ALLOC_DEBUG > 1
 	info->file = file;
 	info->line = line;
-#if ALLOC_DEBUG > 2
 	info->tag = 0;
-#endif
 	spin_lock_bh(&alloc_lock);
 	InsertTailList(&allocs, &info->list);
 	spin_unlock_bh(&alloc_lock);
@@ -136,7 +132,7 @@ void *wrap_kmalloc(size_t size, unsigned flags, const char *file, int line)
 	return (info + 1);
 }
 
-void *wrap_kzalloc(size_t size, unsigned flags, const char *file, int line)
+void *wrap_kzalloc(size_t size, gfp_t flags, const char *file, int line)
 {
 	void *ptr = wrap_kmalloc(size, flags, file, line);
 	if (ptr)
@@ -177,9 +173,7 @@ void *wrap_vmalloc(unsigned long size, const char *file, int line)
 #if ALLOC_DEBUG > 1
 	info->file = file;
 	info->line = line;
-#if ALLOC_DEBUG > 2
 	info->tag = 0;
-#endif
 	spin_lock_bh(&alloc_lock);
 	InsertTailList(&allocs, &info->list);
 	spin_unlock_bh(&alloc_lock);
@@ -187,7 +181,7 @@ void *wrap_vmalloc(unsigned long size, const char *file, int line)
 	return (info + 1);
 }
 
-void *wrap__vmalloc(unsigned long size, unsigned int gfp_mask, pgprot_t prot,
+void *wrap__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot,
 		    const char *file, int line)
 {
 	struct alloc_info *info;
@@ -204,9 +198,7 @@ void *wrap__vmalloc(unsigned long size, unsigned int gfp_mask, pgprot_t prot,
 #if ALLOC_DEBUG > 1
 	info->file = file;
 	info->line = line;
-#if ALLOC_DEBUG > 2
 	info->tag = 0;
-#endif
 	spin_lock_bh(&alloc_lock);
 	InsertTailList(&allocs, &info->list);
 	spin_unlock_bh(&alloc_lock);
@@ -231,7 +223,7 @@ void wrap_vfree(void *ptr)
 	vfree(info);
 }
 
-void *wrap_alloc_pages(unsigned flags, unsigned int size,
+void *wrap_alloc_pages(gfp_t flags, unsigned int size,
 		       const char *file, int line)
 {
 	struct alloc_info *info;
@@ -246,9 +238,7 @@ void *wrap_alloc_pages(unsigned flags, unsigned int size,
 #if ALLOC_DEBUG > 1
 	info->file = file;
 	info->line = line;
-#if ALLOC_DEBUG > 2
 	info->tag = 0;
-#endif
 	spin_lock_bh(&alloc_lock);
 	InsertTailList(&allocs, &info->list);
 	spin_unlock_bh(&alloc_lock);
@@ -287,9 +277,7 @@ void *wrap_ExAllocatePoolWithTag(enum pool_type pool_type, SIZE_T size,
 	info = addr - sizeof(*info);
 	info->file = file;
 	info->line = line;
-#if ALLOC_DEBUG > 2
 	info->tag = tag;
-#endif
 	EXIT4(return addr);
 }
 #endif
@@ -352,15 +340,9 @@ void wrapmem_exit(void)
 		info = container_of(ent, struct alloc_info, list);
 		atomic_sub(info->size, &alloc_sizes[ALLOC_TYPE_SLACK]);
 		WARNING("%p in %d of size %zu allocated at %s(%d) "
-#if ALLOC_DEBUG > 2
-			"with tag 0x%08X "
-#endif
-			"leaking; freeing it now", info + 1, info->type,
-			info->size, info->file, info->line
-#if ALLOC_DEBUG > 2
-			, info->tag
-#endif
-			);
+			"with tag 0x%08X leaking; freeing it now",
+			info + 1, info->type, info->size, info->file,
+			info->line, info->tag);
 		if (info->type == ALLOC_TYPE_KMALLOC_ATOMIC ||
 		    info->type == ALLOC_TYPE_KMALLOC_NON_ATOMIC)
 			kfree(info);

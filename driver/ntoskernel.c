@@ -85,9 +85,7 @@ WIN_SYMBOL_MAP("KeTickCount", &jiffies)
 
 WIN_SYMBOL_MAP("NlsMbCodePageTag", FALSE)
 
-#ifdef NTOS_WQ
 workqueue_struct_t *ntos_wq;
-#endif
 
 #ifdef WRAP_PREEMPT
 DEFINE_PER_CPU(irql_info_t, irql_info);
@@ -1485,6 +1483,7 @@ static struct nt_thread *create_nt_thread(struct task_struct *task)
 	InitializeListHead(&thread->irps);
 	initialize_object(&thread->dh, ThreadObject, 0);
 	thread->dh.size = sizeof(*thread);
+	thread->prio = LOW_PRIORITY;
 	return thread;
 }
 
@@ -1519,12 +1518,7 @@ wstdcall KPRIORITY WIN_FUNC(KeQueryPriorityThread,1)
 		EXIT2(return LOW_REALTIME_PRIORITY);
 	}
 
-	if (thread_priority(thread->task) <= 0)
-		prio = LOW_PRIORITY;
-	else if (thread_priority(thread->task) <= -5)
-		prio = LOW_REALTIME_PRIORITY;
-	else
-		prio = MAXIMUM_PRIORITY;
+	prio = thread->prio;
 
 	TRACE2("%d", prio);
 	return prio;
@@ -1551,21 +1545,10 @@ wstdcall KPRIORITY WIN_FUNC(KeSetPriorityThread,2)
 		EXIT2(return LOW_REALTIME_PRIORITY);
 	}
 
-	if (thread_priority(task) <= 0)
-		old_prio = LOW_PRIORITY;
-	else if (thread_priority(task) <= -5)
-		old_prio = LOW_REALTIME_PRIORITY;
-	else
-		old_prio = MAXIMUM_PRIORITY;
+	old_prio = thread->prio;
+	thread->prio = prio;
 
-	if (prio == LOW_PRIORITY)
-		set_thread_priority(task, 0);
-	else if (prio == LOW_REALTIME_PRIORITY)
-		set_thread_priority(task, -5);
-	else if (prio == HIGH_PRIORITY)
-		set_thread_priority(task, -10);
-
-	TRACE2("%d, %d", old_prio, (int)thread_priority(task));
+	TRACE2("%d, %d", old_prio, thread->prio);
 	return old_prio;
 }
 
@@ -1619,16 +1602,6 @@ wstdcall NTSTATUS WIN_FUNC(PsCreateSystemThread,7)
 	thread_tramp.ctx = ctx;
 	init_completion(&thread_tramp.started);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,7)
-	thread_tramp.thread->pid = kernel_thread(ntdriver_thread, &thread_tramp,
-						 CLONE_SIGHAND);
-	TRACE2("pid = %d", thread_tramp.thread->pid);
-	if (thread_tramp.thread->pid < 0) {
-		free_object(thread_tramp.thread);
-		EXIT2(return STATUS_FAILURE);
-	}
-	TRACE2("created task: %d", thread_tramp.thread->pid);
-#else
 	thread_tramp.thread->task = kthread_run(ntdriver_thread,
 						&thread_tramp, "ntdriver");
 	if (IS_ERR(thread_tramp.thread->task)) {
@@ -1636,7 +1609,6 @@ wstdcall NTSTATUS WIN_FUNC(PsCreateSystemThread,7)
 		EXIT2(return STATUS_FAILURE);
 	}
 	TRACE2("created task: %p", thread_tramp.thread->task);
-#endif
 
 	wait_for_completion(&thread_tramp.started);
 	*handle = OBJECT_TO_HEADER(thread_tramp.thread);
@@ -1715,7 +1687,7 @@ wstdcall void *WIN_FUNC(MmAllocateContiguousMemorySpecifyCache,5)
 	 PHYSICAL_ADDRESS boundary, enum memory_caching_type cache_type)
 {
 	void *addr;
-	unsigned int flags;
+	gfp_t flags;
 
 	ENTER2("%lu, 0x%lx, 0x%lx, 0x%lx, %d", size, (long)lowest,
 	       (long)highest, (long)boundary, cache_type);
@@ -1764,11 +1736,11 @@ wstdcall PHYSICAL_ADDRESS WIN_FUNC(MmGetPhysicalAddress,1)
  * probably get this device to work if we create a buffer with the
  * strings as required by the driver and return virtual address for
  * that address instead */
-wstdcall void *WIN_FUNC(MmMapIoSpace,3)
+wstdcall void __iomem *WIN_FUNC(MmMapIoSpace,3)
 	(PHYSICAL_ADDRESS phys_addr, SIZE_T size,
 	 enum memory_caching_type cache)
 {
-	void *virt;
+	void __iomem *virt;
 	ENTER1("cache type: %d", cache);
 	if (cache == MmCached)
 		virt = ioremap(phys_addr, size);
@@ -1779,7 +1751,7 @@ wstdcall void *WIN_FUNC(MmMapIoSpace,3)
 }
 
 wstdcall void WIN_FUNC(MmUnmapIoSpace,2)
-	(void *addr, SIZE_T size)
+	(void __iomem *addr, SIZE_T size)
 {
 	ENTER1("%p, %lu", addr, size);
 	iounmap(addr);
@@ -2557,20 +2529,16 @@ int ntoskernel_init(void)
 	} while (0);
 #endif
 
-#ifdef NTOS_WQ
 	ntos_wq = create_singlethread_workqueue("ntos_wq");
 	if (!ntos_wq) {
 		WARNING("couldn't create ntos_wq thread");
 		return -ENOMEM;
 	}
 	ntos_worker_thread = wrap_worker_init(ntos_wq);
-#else
-	ntos_worker_thread = wrap_worker_init(NULL);
-#endif
 	TRACE1("%p", ntos_worker_thread);
 
 	if (add_bus_driver("PCI")
-#ifdef CONFIG_USB
+#ifdef ENABLE_USB
 	    || add_bus_driver("USB")
 #endif
 		) {
@@ -2688,10 +2656,8 @@ void ntoskernel_exit(void)
 #if defined(CONFIG_X86_64)
 	del_timer_sync(&shared_data_timer);
 #endif
-#ifdef NTOS_WQ
 	if (ntos_wq)
 		destroy_workqueue(ntos_wq);
-#endif
 	TRACE1("%p", ntos_worker_thread);
 	if (ntos_worker_thread)
 		ObDereferenceObject(ntos_worker_thread);

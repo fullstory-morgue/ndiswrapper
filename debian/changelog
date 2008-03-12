@@ -1,3 +1,9 @@
+ndiswrapper (1.52+svn20080312.r2638-1) UNRELEASED; urgency=low
+
+  * (NOT RELEASED YET) New upstream release
+
+ -- Kel Modderman <kel@otaku42.de>  Wed, 12 Mar 2008 18:47:04 +1000
+
 ndiswrapper (1.52-1) unstable; urgency=low
 
   * New upstream release.

@@ -32,8 +32,6 @@ static spinlock_t ndis_work_list_lock;
 workqueue_struct_t *ndis_wq;
 static struct nt_thread *ndis_worker_thread;
 
-extern struct semaphore loader_mutex;
-
 static void *ndis_get_routine_address(char *name);
 
 wstdcall void WIN_FUNC(NdisInitializeWrapper,4)
@@ -56,7 +54,7 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMRegisterMiniport,3)
 {
 	int min_length;
 	struct wrap_driver *wrap_driver;
-	struct wrap_ndis_driver *ndis_driver;
+	struct ndis_driver *ndis_driver;
 
 	min_length = ((char *)&mp->co_create_vc) - ((char *)mp);
 
@@ -551,7 +549,7 @@ wstdcall void WIN_FUNC(NdisReadNetworkAddress,4)
 	(NDIS_STATUS *status, void **addr, UINT *len,
 	 struct ndis_mp_block *nmb)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	struct ndis_configuration_parameter *param;
 	struct unicode_string key;
 	struct ansi_string ansi;
@@ -662,7 +660,7 @@ wstdcall void WIN_FUNC(NdisMSetAttributesEx,5)
 	(struct ndis_mp_block *nmb, void *mp_ctx,
 	 UINT hangcheck_interval, UINT attributes, ULONG adaptertype)
 {
-	struct wrap_ndis_device *wnd;
+	struct ndis_device *wnd;
 
 	ENTER1("%p, %p, %d, %08x, %d", nmb, mp_ctx, hangcheck_interval,
 	       attributes, adaptertype);
@@ -765,7 +763,7 @@ wstdcall void WIN_FUNC(NdisMQueryAdapterResources,4)
 	(NDIS_STATUS *status, struct ndis_mp_block *nmb,
 	 NDIS_RESOURCE_LIST *resource_list, UINT *size)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	NDIS_RESOURCE_LIST *list;
 	UINT resource_length;
 
@@ -803,7 +801,7 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMPciAssignResources,3)
 	(struct ndis_mp_block *nmb, ULONG slot_number,
 	 NDIS_RESOURCE_LIST **resources)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 
 	ENTER2("%p, %p", wnd, wnd->wd->resource_list);
 	*resources = &wnd->wd->resource_list->list->partial_resource_list;
@@ -811,10 +809,10 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMPciAssignResources,3)
 }
 
 wstdcall NDIS_STATUS WIN_FUNC(NdisMMapIoSpace,4)
-	(void **virt, struct ndis_mp_block *nmb,
+	(void __iomem **virt, struct ndis_mp_block *nmb,
 	 NDIS_PHY_ADDRESS phy_addr, UINT len)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 
 	ENTER2("%Lx, %d", phy_addr, len);
 	*virt = MmMapIoSpace(phy_addr, len, MmCached);
@@ -829,7 +827,7 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMMapIoSpace,4)
 }
 
 wstdcall void WIN_FUNC(NdisMUnmapIoSpace,3)
-	(struct ndis_mp_block *nmb, void *virt, UINT len)
+	(struct ndis_mp_block *nmb, void __iomem *virt, UINT len)
 {
 	ENTER2("%p, %d", virt, len);
 	MmUnmapIoSpace(virt, len);
@@ -937,7 +935,7 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMAllocateMapRegisters,5)
 	(struct ndis_mp_block *nmb, UINT dmachan,
 	 NDIS_DMA_SIZE dmasize, ULONG basemap, ULONG max_buf_size)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 
 	ENTER2("%p, %d %d %d %d", wnd, dmachan, dmasize, basemap, max_buf_size);
 	if (wnd->dma_map_count > 0) {
@@ -989,7 +987,7 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMAllocateMapRegisters,5)
 wstdcall void WIN_FUNC(NdisMFreeMapRegisters,1)
 	(struct ndis_mp_block *nmb)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	int i;
 
 	ENTER2("wnd: %p", wnd);
@@ -1013,7 +1011,7 @@ wstdcall void WIN_FUNC(NdisMStartBufferPhysicalMapping,6)
 	 ULONG index, BOOLEAN write_to_dev,
 	 struct ndis_phy_addr_unit *phy_addr_array, UINT *array_size)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 
 	ENTER3("%p, %p, %u, %u", wnd, buf, index, wnd->dma_map_count);
 	if (unlikely(wnd->sg_dma_size || !write_to_dev ||
@@ -1051,7 +1049,7 @@ wstdcall void WIN_FUNC(NdisMStartBufferPhysicalMapping,6)
 wstdcall void WIN_FUNC(NdisMCompleteBufferPhysicalMapping,3)
 	(struct ndis_mp_block *nmb, ndis_buffer *buf, ULONG index)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 
 	ENTER3("%p, %p %u (%u)", wnd, buf, index, wnd->dma_map_count);
 
@@ -1100,7 +1098,7 @@ wstdcall void WIN_FUNC(NdisMFreeSharedMemory,5)
 
 wstdcall void alloc_shared_memory_async(void *arg1, void *arg2)
 {
-	struct wrap_ndis_device *wnd;
+	struct ndis_device *wnd;
 	struct alloc_shared_mem *alloc_shared_mem;
 	struct miniport *mp;
 	void *virt;
@@ -1124,7 +1122,7 @@ WIN_FUNC_DECL(alloc_shared_memory_async,2)
 wstdcall NDIS_STATUS WIN_FUNC(NdisMAllocateSharedMemoryAsync,4)
 	(struct ndis_mp_block *nmb, ULONG size, BOOLEAN cached, void *ctx)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	struct alloc_shared_mem *alloc_shared_mem;
 
 	ENTER3("wnd: %p", wnd);
@@ -1692,7 +1690,7 @@ wstdcall void WIN_FUNC(NdisSend,3)
 	(NDIS_STATUS *status, struct ndis_mp_block *nmb,
 	 struct ndis_packet *packet)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	struct miniport *mp;
 	KIRQL irql;
 
@@ -1839,7 +1837,7 @@ wstdcall void WIN_FUNC(NdisCancelTimer,2)
 wstdcall void WIN_FUNC(NdisMRegisterAdapterShutdownHandler,3)
 	(struct ndis_mp_block *nmb, void *ctx, void *func)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	ENTER1("%p", func);
 	wnd->wd->driver->ndis_driver->mp.shutdown = func;
 	wnd->shutdown_ctx = ctx;
@@ -1848,7 +1846,7 @@ wstdcall void WIN_FUNC(NdisMRegisterAdapterShutdownHandler,3)
 wstdcall void WIN_FUNC(NdisMDeregisterAdapterShutdownHandler,1)
 	(struct ndis_mp_block *nmb)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	wnd->wd->driver->ndis_driver->mp.shutdown = NULL;
 	wnd->shutdown_ctx = NULL;
 }
@@ -1862,7 +1860,7 @@ wstdcall void WIN_FUNC(NdisMDeregisterAdapterShutdownHandler,1)
 wstdcall void deserialized_irq_handler(struct kdpc *kdpc, void *ctx,
 				       void *arg1, void *arg2)
 {
-	struct wrap_ndis_device *wnd = ctx;
+	struct ndis_device *wnd = ctx;
 	ndis_interrupt_handler irq_handler = arg1;
 	struct miniport *mp = arg2;
 
@@ -1878,7 +1876,7 @@ WIN_FUNC_DECL(deserialized_irq_handler,4)
 wstdcall void serialized_irq_handler(struct kdpc *kdpc, void *ctx,
 				     void *arg1, void *arg2)
 {
-	struct wrap_ndis_device *wnd = ctx;
+	struct ndis_device *wnd = ctx;
 	ndis_interrupt_handler irq_handler = arg1;
 
 	TRACE6("%p, %p, %p", wnd, irq_handler, arg2);
@@ -1893,7 +1891,7 @@ WIN_FUNC_DECL(serialized_irq_handler,4)
 wstdcall BOOLEAN ndis_isr(struct kinterrupt *kinterrupt, void *ctx)
 {
 	struct ndis_mp_interrupt *mp_interrupt = ctx;
-	struct wrap_ndis_device *wnd = mp_interrupt->nmb->wnd;
+	struct ndis_device *wnd = mp_interrupt->nmb->wnd;
 	BOOLEAN recognized, queue_handler;
 
 	TRACE6("%p", wnd);
@@ -1926,7 +1924,7 @@ wstdcall NDIS_STATUS WIN_FUNC(NdisMRegisterInterrupt,7)
 	 struct ndis_mp_block *nmb, UINT vector, UINT level,
 	 BOOLEAN req_isr, BOOLEAN shared, enum kinterrupt_mode mode)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	struct miniport *mp;
 
 	ENTER1("%p, vector:%d, level:%d, req_isr:%d, shared:%d, mode:%d",
@@ -2009,7 +2007,7 @@ wstdcall BOOLEAN WIN_FUNC(NdisMSynchronizeWithInterrupt,3)
 wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 	(struct ndis_mp_block *nmb, NDIS_STATUS status, void *buf, UINT len)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	struct ndis_status_indication *si;
 	struct ndis_auth_req *auth_req;
 	struct ndis_radio_status_indication *radio_status;
@@ -2022,8 +2020,8 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 		if (netif_queue_stopped(wnd->net_dev))
 			netif_wake_queue(wnd->net_dev);
 		if (wnd->physical_medium == NdisPhysicalMediumWirelessLan) {
-			set_bit(LINK_STATUS_ON, &wnd->wrap_ndis_pending_work);
-			schedule_wrapndis_work(&wnd->wrap_ndis_work);
+			set_bit(LINK_STATUS_ON, &wnd->ndis_pending_work);
+			schedule_wrapndis_work(&wnd->ndis_work);
 		}
 		break;
 	case NDIS_STATUS_MEDIA_DISCONNECT:
@@ -2032,8 +2030,8 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 		wnd->tx_ok = 0;
 		if (wnd->physical_medium == NdisPhysicalMediumWirelessLan) {
 			memset(&wnd->essid, 0, sizeof(wnd->essid));
-			set_bit(LINK_STATUS_OFF, &wnd->wrap_ndis_pending_work);
-			schedule_wrapndis_work(&wnd->wrap_ndis_work);
+			set_bit(LINK_STATUS_OFF, &wnd->ndis_pending_work);
+			schedule_wrapndis_work(&wnd->ndis_work);
 		}
 		break;
 	case NDIS_STATUS_MEDIA_SPECIFIC_INDICATION:
@@ -2064,7 +2062,6 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 					group_error = 1;
 					TRACE2("group_error");
 				}
-#if WIRELESS_EXT > 17
 				if (pairwise_error || group_error) {
 					union iwreq_data wrqu;
 					struct iw_michaelmicfailure micfailure;
@@ -2084,7 +2081,6 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 							    IWEVMICHAELMICFAILURE,
 							    &wrqu, (u8 *)&micfailure);
 				}
-#endif
 				len -= auth_req->length;
 				buf = (char *)buf + auth_req->length;
 			}
@@ -2107,10 +2103,8 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 			TRACE2("PMKID ver %d num_cand %d",
 			       cand->version, cand->num_candidates);
 			for (i = 0; i < cand->num_candidates; i++) {
-#if WIRELESS_EXT > 17
 				struct iw_pmkid_cand pcand;
 				union iwreq_data wrqu;
-#endif
 				struct ndis_pmkid_candidate *c =
 					&cand->candidates[i];
 				if ((u8 *)(c + 1) > end) {
@@ -2119,7 +2113,6 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 				}
 				TRACE2("%ld: " MACSTRSEP " 0x%x",
 				       i, MAC2STR(c->bssid), c->flags);
-#if WIRELESS_EXT > 17
 				memset(&pcand, 0, sizeof(pcand));
 				if (c->flags & 0x01)
 					pcand.flags |= IW_PMKID_CAND_PREAUTH;
@@ -2130,7 +2123,6 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 				wrqu.data.length = sizeof(pcand);
 				wireless_send_event(wnd->net_dev, IWEVPMKIDCAND,
 						    &wrqu, (u8 *)&pcand);
-#endif
 			}
 			break;
 		}
@@ -2165,7 +2157,7 @@ wstdcall void WIN_FUNC(NdisMIndicateStatus,4)
 wstdcall void WIN_FUNC(NdisMIndicateStatusComplete,1)
 	(struct ndis_mp_block *nmb)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	ENTER2("%p", wnd);
 	if (wnd->tx_ok)
 		schedule_wrapndis_work(&wnd->tx_work);
@@ -2175,7 +2167,7 @@ wstdcall void WIN_FUNC(NdisMIndicateStatusComplete,1)
 wstdcall void NdisMSendComplete(struct ndis_mp_block *nmb,
 				struct ndis_packet *packet, NDIS_STATUS status)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	ENTER4("%p, %08X", packet, status);
 	assert_irql(_irql_ <= DISPATCH_LEVEL);
 	if (deserialized_driver(wnd))
@@ -2211,7 +2203,7 @@ wstdcall void NdisMSendComplete(struct ndis_mp_block *nmb,
 /* called via function pointer */
 wstdcall void NdisMSendResourcesAvailable(struct ndis_mp_block *nmb)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	ENTER3("%d, %d", wnd->tx_ring_start, wnd->tx_ring_end);
 	wnd->tx_ok = 1;
 	schedule_wrapndis_work(&wnd->tx_work);
@@ -2220,7 +2212,7 @@ wstdcall void NdisMSendResourcesAvailable(struct ndis_mp_block *nmb)
 
 wstdcall void return_packet(void *arg1, void *arg2)
 {
-	struct wrap_ndis_device *wnd;
+	struct ndis_device *wnd;
 	struct ndis_packet *packet;
 	struct miniport *mp;
 	KIRQL irql;
@@ -2242,7 +2234,7 @@ wstdcall void NdisMIndicateReceivePacket(struct ndis_mp_block *nmb,
 					 struct ndis_packet **packets,
 					 UINT nr_packets)
 {
-	struct wrap_ndis_device *wnd;
+	struct ndis_device *wnd;
 	ndis_buffer *buffer;
 	struct ndis_packet *packet;
 	struct sk_buff *skb;
@@ -2333,7 +2325,7 @@ wstdcall void EthRxIndicateHandler(struct ndis_mp_block *nmb, void *rx_ctx,
 				   UINT packet_size)
 {
 	struct sk_buff *skb = NULL;
-	struct wrap_ndis_device *wnd;
+	struct ndis_device *wnd;
 	unsigned int skb_size = 0;
 	KIRQL irql;
 	struct ndis_packet_oob_data *oob_data;
@@ -2450,7 +2442,7 @@ wstdcall void NdisMTransferDataComplete(struct ndis_mp_block *nmb,
 					struct ndis_packet *packet,
 					NDIS_STATUS status, UINT bytes_txed)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	struct sk_buff *skb;
 	unsigned int skb_size;
 	struct ndis_packet_oob_data *oob_data;
@@ -2515,7 +2507,7 @@ wstdcall void EthRxComplete(struct ndis_mp_block *nmb)
 wstdcall void NdisMQueryInformationComplete(struct ndis_mp_block *nmb,
 					    NDIS_STATUS status)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	typeof(wnd->ndis_req_task) task;
 
 	ENTER2("nmb: %p, wnd: %p, %08X", nmb, wnd, status);
@@ -2532,7 +2524,7 @@ wstdcall void NdisMQueryInformationComplete(struct ndis_mp_block *nmb,
 wstdcall void NdisMSetInformationComplete(struct ndis_mp_block *nmb,
 					  NDIS_STATUS status)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	typeof(wnd->ndis_req_task) task;
 
 	ENTER2("status = %08X", status);
@@ -2549,7 +2541,7 @@ wstdcall void NdisMSetInformationComplete(struct ndis_mp_block *nmb,
 wstdcall void NdisMResetComplete(struct ndis_mp_block *nmb,
 				 NDIS_STATUS status, BOOLEAN address_reset)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	typeof(wnd->ndis_req_task) task;
 
 	ENTER2("status: %08X, %u", status, address_reset);
@@ -2615,7 +2607,7 @@ wstdcall struct nt_list *WIN_FUNC(NdisInterlockedRemoveHeadList,2)
 wstdcall NDIS_STATUS WIN_FUNC(NdisMInitializeScatterGatherDma,3)
 	(struct ndis_mp_block *nmb, BOOLEAN dma_size, ULONG max_phy_map)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	ENTER2("dma_size=%d, maxtransfer=%u", dma_size, max_phy_map);
 #ifdef CONFIG_X86_64
 	if (dma_size != NDIS_DMA_64BITS) {
@@ -2638,11 +2630,7 @@ wstdcall ULONG WIN_FUNC(NdisMGetDmaAlignment,1)
 	(struct ndis_mp_block *nmb)
 {
 	ENTER3("");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
 	return dma_get_cache_alignment();
-#else
-	return L1_CACHE_BYTES;
-#endif
 }
 
 wstdcall CHAR WIN_FUNC(NdisSystemProcessorCount,0)
@@ -2655,14 +2643,9 @@ wstdcall void WIN_FUNC(NdisGetCurrentProcessorCounts,3)
 	(ULONG *idle, ULONG *kernel_user, ULONG *index)
 {
 	int cpu = smp_processor_id();
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,10)
 	*idle = kstat_cpu(cpu).cpustat.idle;
 	*kernel_user = kstat_cpu(cpu).cpustat.system +
 		kstat_cpu(cpu).cpustat.user;
-#else
-	*idle = 0;
-	*kernel_user = 0;
-#endif
 	*index = cpu;
 }
 
@@ -2769,7 +2752,7 @@ wstdcall UINT WIN_FUNC(NdisGetVersion,0)
 wstdcall NDIS_STATUS WIN_FUNC(NdisMQueryAdapterInstanceName,2)
 	(struct unicode_string *name, struct ndis_mp_block *nmb)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	struct ansi_string ansi;
 
 	if (wrap_is_pci_bus(wnd->wd->dev_bus))
@@ -2844,7 +2827,7 @@ wstdcall void WIN_FUNC(NdisMCoRequestComplete,3)
 	(NDIS_STATUS status, struct ndis_mp_block *nmb,
 	 struct ndis_request *ndis_request)
 {
-	struct wrap_ndis_device *wnd = nmb->wnd;
+	struct ndis_device *wnd = nmb->wnd;
 	typeof(wnd->ndis_req_task) task;
 
 	ENTER3("%08X", status);
@@ -2925,7 +2908,7 @@ static void *ndis_get_routine_address(char *name)
 }
 
 /* ndis_init_device is called for each device */
-int ndis_init_device(struct wrap_ndis_device *wnd)
+int ndis_init_device(struct ndis_device *wnd)
 {
 	struct ndis_mp_block *nmb = wnd->nmb;
 
@@ -2955,7 +2938,7 @@ int ndis_init_device(struct wrap_ndis_device *wnd)
 }
 
 /* ndis_exit_device is called for each device */
-void ndis_exit_device(struct wrap_ndis_device *wnd)
+void ndis_exit_device(struct ndis_device *wnd)
 {
 	struct wrap_device_setting *setting;
 	ENTER2("%p", wnd);
