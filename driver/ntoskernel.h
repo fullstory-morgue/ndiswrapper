@@ -39,21 +39,18 @@
 #include <linux/version.h>
 #include <linux/etherdevice.h>
 #include <net/iw_handler.h>
-#include <linux/netdevice.h>
 #include <linux/ethtool.h>
 #include <linux/if_arp.h>
 #include <linux/rtnetlink.h>
 #include <linux/highmem.h>
+#include <linux/percpu.h>
+#include <linux/kthread.h>
+#include <linux/workqueue.h>
 
 #if !defined(CONFIG_X86) && !defined(CONFIG_X86_64)
 #error "this module is for x86 or x86_64 architectures only"
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,7)
-#include <linux/kthread.h>
-#else
-#include <linux/config.h>
-#endif
 /* Interrupt backwards compatibility stuff */
 #include <linux/interrupt.h>
 #ifndef IRQ_HANDLED
@@ -62,9 +59,6 @@
 #define irqreturn_t void
 #endif
 
-/* Workqueue / task queue backwards compatibility stuff */
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,5,41)
-#include <linux/workqueue.h>
 /* pci functions in 2.6 kernels have problems allocating dma buffers,
  * but seem to work fine with dma functions
  */
@@ -85,42 +79,9 @@
 	dma_unmap_sg(&pci_dev->dev, sglist, nents, direction)
 #define PCI_DMA_MAP_ERROR(dma_addr) dma_mapping_error(dma_addr)
 
-#else // linux version <= 2.5.41
-
-#define PCI_DMA_ALLOC_COHERENT(dev,size,dma_handle)	\
-	pci_alloc_consistent(dev,size,dma_handle)
-#define PCI_DMA_FREE_COHERENT(dev,size,cpu_addr,dma_handle)	\
-	pci_free_consistent(dev,size,cpu_addr,dma_handle)
-#define PCI_DMA_MAP_SINGLE(dev,addr,size,direction)	\
-	pci_map_single(dev,addr,size,direction)
-#define PCI_DMA_UNMAP_SINGLE(dev,dma_handle,size,direction)	\
-	pci_unmap_single(dev,dma_handle,size,direction)
-#define MAP_SG(dev, sglist, nents, direction)		\
-	pci_map_sg(dev, sglist, nents, direction)
-#define UNMAP_SG(dev, sglist, nents, direction)		\
-	pci_unmap_sg(dev, sglist, nents, direction)
-#define PCI_DMA_MAP_ERROR(dma_addr) pci_dma_mapping_error(dma_addr)
-
-#include <linux/smp_lock.h>
-
-/* RedHat kernels define irqs_disabled this way */
-#ifndef irqs_disabled
-#define irqs_disabled()                \
-({                                     \
-	unsigned long flags;	       \
-       __save_flags(flags);            \
-       !(flags & (1<<9));              \
-})
-#endif
-
-#endif // LINUX_VERSION_CODE
 
 #if defined(CONFIG_NET_RADIO) && !defined(CONFIG_WIRELESS_EXT)
 #define CONFIG_WIRELESS_EXT
-#endif
-
-#ifndef CONFIG_WIRELESS_EXT
-#warning "wirelss devices are not supported by this kernel"
 #endif
 
 #define prepare_wait_condition(task, var, value)	\
@@ -206,13 +167,7 @@ typedef struct {
 #undef create_singlethread_workqueue
 #define create_singlethread_workqueue(name) wrap_create_wq(name, 1, 0)
 #undef create_workqueue
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,0)
 #define create_workqueue(name) wrap_create_wq(name, 0, 0)
-#else
-#define create_workqueue(name) wrap_create_wq(name, 1, 0)
-#define for_each_online_cpu(cpu) while ((cpu = 0) || 1)
-#define kthread_bind(thread, cpu) do { } while (0)
-#endif
 #undef destroy_workqueue
 #define destroy_workqueue wrap_destroy_wq
 #undef queue_work
@@ -224,8 +179,8 @@ workqueue_struct_t *wrap_create_wq(const char *name, u8 singlethread, u8 freeze)
 void wrap_destroy_wq_on(workqueue_struct_t *workq, int cpu);
 void wrap_destroy_wq(workqueue_struct_t *workq);
 int wrap_queue_work_on(workqueue_struct_t *workq, work_struct_t *work,
-		       int cpu) wfastcall;
-int wrap_queue_work(workqueue_struct_t *workq, work_struct_t *work) wfastcall;
+		       int cpu);
+int wrap_queue_work(workqueue_struct_t *workq, work_struct_t *work);
 void wrap_cancel_work(work_struct_t *work);
 void wrap_flush_wq_on(workqueue_struct_t *workq, int cpu);
 void wrap_flush_wq(workqueue_struct_t *workq);
@@ -284,34 +239,8 @@ struct nt_thread *wrap_worker_init(workqueue_struct_t *wq);
 #define CHECKSUM_HW CHECKSUM_PARTIAL
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
-
-#ifndef container_of
-#define container_of(ptr, type, member)					\
-({									\
-	const typeof( ((type *)0)->member ) *__mptr = (ptr);		\
-	(type *)( (char *)__mptr - offsetof(type,member) );		\
-})
-#endif
-
-#ifndef virt_addr_valid
-#define virt_addr_valid(addr) VALID_PAGE(virt_to_page(addr))
-#endif
-
-#ifndef SET_NETDEV_DEV
-#define SET_NETDEV_DEV(net,pdev) do { } while (0)
-#endif
-
-#define usb_set_intfdata(intf, data) do { } while (0)
-
-#endif // LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
-
 #ifndef offset_in_page
 #define offset_in_page(p) ((unsigned long)(p) & ~PAGE_MASK)
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,23)
-#define HAVE_ETHTOOL 1
 #endif
 
 #ifndef PMSG_SUSPEND
@@ -344,10 +273,6 @@ typedef u32 pm_message_t;
 #define PM_EVENT_SUSPEND 2
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
-#define pci_choose_state(dev, state) (state)
-#endif
-
 #if !defined(HAVE_NETDEV_PRIV)
 #define netdev_priv(dev)  ((dev)->priv)
 #endif
@@ -358,6 +283,10 @@ typedef u32 pm_message_t;
 #else
 #define ISR_PT_REGS_PARAM_DECL , struct pt_regs *regs
 #define ISR_PT_REGS_ARG , NULL
+#endif
+
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,16)
+#define for_each_possible_cpu(_cpu) for_each_cpu(_cpu)
 #endif
 
 #ifndef flush_icache_range
@@ -374,14 +303,6 @@ typedef u32 pm_message_t;
 
 #define memcpy_skb(skb, from, length)			\
 	memcpy(skb_put(skb, length), from, length)
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
-#define thread_priority(thread) (thread)->nice
-#define set_thread_priority(thread, prio) (thread)->nice = (prio)
-#else
-#define thread_priority(thread) task_nice(thread)
-#define set_thread_priority(thread, prio) set_user_nice(thread, prio)
-#endif
 
 #ifndef DMA_24BIT_MASK
 #define DMA_24BIT_MASK 0x0000000000ffffffULL
@@ -418,15 +339,38 @@ typedef u32 pm_message_t;
 #include "lin2win.h"
 #include "loader.h"
 
-#include "compat.h"
-
-#if !defined(CONFIG_USB) && defined(CONFIG_USB_MODULE)
-#define CONFIG_USB 1
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)
+static inline void netif_tx_lock(struct net_device *dev)
+{
+	spin_lock(&dev->xmit_lock);
+}
+static inline void netif_tx_unlock(struct net_device *dev)
+{
+	spin_unlock(&dev->xmit_lock);
+}
+static inline void netif_tx_lock_bh(struct net_device *dev)
+{
+	spin_lock_bh(&dev->xmit_lock);
+}
+static inline void netif_tx_unlock_bh(struct net_device *dev)
+{
+	spin_unlock_bh(&dev->xmit_lock);
+}
 #endif
 
-#if defined(DISABLE_USB)
-#undef CONFIG_USB
-#undef CONFIG_USB_MODULE
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
+static inline void netif_poll_enable(struct net_device *dev)
+{
+}
+static inline void netif_poll_disable(struct net_device *dev)
+{
+}
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
+#define proc_net_root init_net.proc_net
+#else
+#define proc_net_root proc_net
 #endif
 
 /* TICK is 100ns */
@@ -472,7 +416,7 @@ struct wrap_export {
 #define WIN_WIN_SYMBOL(name, argc)					\
 	{#name, (generic_func) win2lin__win_ ## name ## _ ## argc}
 #define WIN_FUNC_DECL(name, argc)			\
-	typeof(name) win2lin_ ## name ## _ ## argc;
+	extern typeof(name) win2lin_ ## name ## _ ## argc;
 #define WIN_FUNC_PTR(name, argc) win2lin_ ## name ## _ ## argc
 
 #else
@@ -548,7 +492,7 @@ struct wrap_driver {
 	struct nt_list wrap_devices;
 	struct nt_list settings;
 	int dev_type;
-	struct wrap_ndis_driver *ndis_driver;
+	struct ndis_driver *ndis_driver;
 };
 
 enum hw_status {
@@ -577,9 +521,6 @@ struct wrap_device {
 		struct {
 			struct pci_dev *pdev;
 			enum device_power_state wake_state;
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,9)
-			u32 pci_state[16];
-#endif
 		} pci;
 		struct {
 			struct usb_device *udev;
@@ -589,14 +530,14 @@ struct wrap_device {
 		} usb;
 	};
 	union {
-		struct wrap_ndis_device *wnd;
+		struct ndis_device *wnd;
 	};
 };
 
 #define wrap_is_pci_bus(dev_bus)			\
 	(WRAP_BUS(dev_bus) == WRAP_PCI_BUS ||		\
 	 WRAP_BUS(dev_bus) == WRAP_PCMCIA_BUS)
-#ifdef CONFIG_USB
+#ifdef ENABLE_USB
 /* earlier versions of ndiswrapper used 0 as USB_BUS */
 #define wrap_is_usb_bus(dev_bus)			\
 	(WRAP_BUS(dev_bus) == WRAP_USB_BUS ||		\
@@ -608,21 +549,9 @@ struct wrap_device {
 	(WRAP_DEVICE(dev_bus) == WRAP_BLUETOOTH_DEVICE1 ||	\
 	 WRAP_DEVICE(dev_bus) == WRAP_BLUETOOTH_DEVICE2)
 
-#ifdef WRAP_WQ
-#define NTOS_WQ 1
-#endif
-
-#ifndef NTOS_WQ
-#define NTOS_WQ 1
-#endif
-
-#ifdef NTOS_WQ
 extern workqueue_struct_t *ntos_wq;
 #define schedule_ntos_work(work_struct) queue_work(ntos_wq, work_struct)
 #define schedule_work(work_struct) queue_work(ntos_wq, work_struct)
-#else
-#define schedule_ntos_work(work_struct) schedule_work(work_struct)
-#endif
 
 extern workqueue_struct_t *ndis_wq;
 #define schedule_ndis_work(work_struct) queue_work(ndis_wq, work_struct)
@@ -1083,9 +1012,9 @@ void *ExAllocatePoolWithTag(enum pool_type pool_type, SIZE_T size,
 
 void ExFreePool(void *p) wstdcall;
 ULONG MmSizeOfMdl(void *base, ULONG length) wstdcall;
-void *MmMapIoSpace(PHYSICAL_ADDRESS phys_addr, SIZE_T size,
+void __iomem *MmMapIoSpace(PHYSICAL_ADDRESS phys_addr, SIZE_T size,
 		   enum memory_caching_type cache) wstdcall;
-void MmUnmapIoSpace(void *addr, SIZE_T size) wstdcall;
+void MmUnmapIoSpace(void __iomem *addr, SIZE_T size) wstdcall;
 void MmProbeAndLockPages(struct mdl *mdl, KPROCESSOR_MODE access_mode,
 			 enum lock_operation operation) wstdcall;
 void MmUnlockPages(struct mdl *mdl) wstdcall;
@@ -1211,19 +1140,19 @@ void adjust_user_shared_data_addr(char *driver, unsigned long length);
 #define IoCallDriver(dev, irp) IofCallDriver(dev, irp)
 
 #if defined(IO_DEBUG)
-#define DUMP_IRP(irp)							\
+#define DUMP_IRP(_irp)							\
 do {									\
-	struct io_stack_location *irp_sl;				\
-	irp_sl = IoGetCurrentIrpStackLocation(irp);			\
+	struct io_stack_location *_irp_sl;				\
+	_irp_sl = IoGetCurrentIrpStackLocation(_irp);			\
 	IOTRACE("irp: %p, stack size: %d, cl: %d, sl: %p, dev_obj: %p, " \
 		"mj_fn: %d, minor_fn: %d, nt_urb: %p, event: %p",	\
-		irp, irp->stack_count, (irp)->current_location,		\
-		irp_sl, irp_sl->dev_obj, irp_sl->major_fn,		\
-		irp_sl->minor_fn, IRP_URB(irp),				\
-		(irp)->user_event);					\
+		_irp, _irp->stack_count, (_irp)->current_location,	\
+		_irp_sl, _irp_sl->dev_obj, _irp_sl->major_fn,		\
+		_irp_sl->minor_fn, IRP_URB(_irp),			\
+		(_irp)->user_event);					\
 } while (0)
 #else
-#define DUMP_IRP(irp) do { } while (0)
+#define DUMP_IRP(_irp) do { } while (0)
 #endif
 
 #endif // _NTOSKERNEL_H_

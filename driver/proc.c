@@ -30,7 +30,7 @@ static int procfs_read_ndis_stats(char *page, char **start, off_t off,
 				  int count, int *eof, void *data)
 {
 	char *p = page;
-	struct wrap_ndis_device *wnd = (struct wrap_ndis_device *)data;
+	struct ndis_device *wnd = (struct ndis_device *)data;
 	struct ndis_wireless_stats stats;
 	NDIS_STATUS res;
 	ndis_rssi rssi;
@@ -76,7 +76,7 @@ static int procfs_read_ndis_encr(char *page, char **start, off_t off,
 				 int count, int *eof, void *data)
 {
 	char *p = page;
-	struct wrap_ndis_device *wnd = (struct wrap_ndis_device *)data;
+	struct ndis_device *wnd = (struct ndis_device *)data;
 	int i, encr_status, auth_mode, infra_mode;
 	NDIS_STATUS res;
 	struct ndis_essid essid;
@@ -135,7 +135,7 @@ static int procfs_read_ndis_hw(char *page, char **start, off_t off,
 			       int count, int *eof, void *data)
 {
 	char *p = page;
-	struct wrap_ndis_device *wnd = (struct wrap_ndis_device *)data;
+	struct ndis_device *wnd = (struct ndis_device *)data;
 	struct ndis_configuration config;
 	unsigned int power_mode;
 	NDIS_STATUS res;
@@ -256,7 +256,7 @@ static int procfs_read_ndis_settings(char *page, char **start, off_t off,
 				     int count, int *eof, void *data)
 {
 	char *p = page;
-	struct wrap_ndis_device *wnd = (struct wrap_ndis_device *)data;
+	struct ndis_device *wnd = (struct ndis_device *)data;
 	struct wrap_device_setting *setting;
 
 	if (off != 0) {
@@ -279,13 +279,13 @@ static int procfs_read_ndis_settings(char *page, char **start, off_t off,
 	return (p - page);
 }
 
-static int procfs_write_ndis_settings(struct file *file, const char *buf,
+static int procfs_write_ndis_settings(struct file *file, const char __user *buf,
 				      unsigned long count, void *data)
 {
-	struct wrap_ndis_device *wnd = (struct wrap_ndis_device *)data;
+	struct ndis_device *wnd = (struct ndis_device *)data;
 	char setting[MAX_PROC_STR_LEN], *p;
 	unsigned int i;
-	NTSTATUS res;
+	NDIS_STATUS res;
 
 	if (count > MAX_PROC_STR_LEN)
 		return -EINVAL;
@@ -321,7 +321,7 @@ static int procfs_write_ndis_settings(struct file *file, const char *buf,
 			i = wrap_pnp_suspend_pci_device(wnd->wd->pci.pdev,
 							PMSG_SUSPEND);
 		else
-#if defined(CONFIG_USB) && LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
+#ifdef ENABLE_USB
 			i = wrap_pnp_suspend_usb_device(wnd->wd->usb.intf,
 							PMSG_SUSPEND);
 #else
@@ -333,7 +333,7 @@ static int procfs_write_ndis_settings(struct file *file, const char *buf,
 		if (wrap_is_pci_bus(wnd->wd->dev_bus))
 			i = wrap_pnp_resume_pci_device(wnd->wd->pci.pdev);
 		else
-#if defined(CONFIG_USB) && LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
+#ifdef ENABLE_USB
 			i = wrap_pnp_resume_usb_device(wnd->wd->usb.intf);
 #else
 		i = -1;
@@ -388,7 +388,7 @@ static int procfs_write_ndis_settings(struct file *file, const char *buf,
 	return count;
 }
 
-int wrap_procfs_add_ndis_device(struct wrap_ndis_device *wnd)
+int wrap_procfs_add_ndis_device(struct ndis_device *wnd)
 {
 	struct proc_dir_entry *procfs_entry;
 
@@ -470,7 +470,7 @@ err_hw:
 	return -ENOMEM;
 }
 
-void wrap_procfs_remove_ndis_device(struct wrap_ndis_device *wnd)
+void wrap_procfs_remove_ndis_device(struct ndis_device *wnd)
 {
 	struct proc_dir_entry *procfs_iface = xchg(&wnd->procfs_iface, NULL);
 
@@ -504,7 +504,7 @@ static int procfs_read_debug(char *page, char **start, off_t off,
 	return (p - page);
 }
 
-static int procfs_write_debug(struct file *file, const char *buf,
+static int procfs_write_debug(struct file *file, const char __user *buf,
 			      unsigned long count, void *data)
 {
 	int i;

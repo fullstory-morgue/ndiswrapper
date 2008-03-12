@@ -49,7 +49,7 @@ static struct completion loader_complete;
 static struct nt_list wrap_devices;
 static struct nt_list wrap_drivers;
 
-int wrap_device_type(int data1)
+static int wrap_device_type(int data1)
 {
 	int i;
 	for (i = 0; i < sizeof(class_guids) / sizeof(class_guids[0]); i++)
@@ -100,11 +100,7 @@ struct wrap_driver *load_wrap_driver(struct wrap_device *wd)
 			EXIT1(return NULL);
 		}
 		INIT_COMPLETION(loader_complete);
-		ret = call_usermodehelper("/sbin/loadndisdriver", argv, env
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-					  , 1
-#endif
-			);
+		ret = call_usermodehelper("/sbin/loadndisdriver", argv, env, 1);
 		if (ret) {
 			up(&loader_mutex);
 			ERROR("couldn't load driver %s; check system log "
@@ -266,11 +262,7 @@ struct wrap_bin_file *get_bin_file(char *bin_file_name)
 			EXIT1(return NULL);
 		}
 		INIT_COMPLETION(loader_complete);
-		ret = call_usermodehelper("/sbin/loadndisdriver", argv, env
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-					  , 1
-#endif
-			);
+		ret = call_usermodehelper("/sbin/loadndisdriver", argv, env, 1);
 		if (ret) {
 			up(&loader_mutex);
 			ERROR("couldn't load file %s/%s; check system log "
@@ -598,11 +590,7 @@ static int load_user_space_driver(struct load_driver *load_driver)
 	} else {
 		printk(KERN_INFO "%s: driver %s (%s) loaded\n",
 		       DRIVER_NAME, wrap_driver->name, wrap_driver->version);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,10)
 		add_taint(TAINT_PROPRIETARY_MODULE);
-		/* older kernels don't seem to have a way to set
-		 * tainted information */
-#endif
 		EXIT1(return 0);
 	}
 }
@@ -620,7 +608,7 @@ static struct pci_driver wrap_pci_driver = {
 	.resume		= wrap_pnp_resume_pci_device,
 };
 
-#ifdef CONFIG_USB
+#ifdef ENABLE_USB
 static struct usb_device_id wrap_usb_id_table[] = {
 	{
 		.driver_info = 1
@@ -632,10 +620,8 @@ static struct usb_driver wrap_usb_driver = {
 	.id_table = wrap_usb_id_table,
 	.probe = wrap_pnp_start_usb_device,
 	.disconnect = __devexit_p(wrap_pnp_remove_usb_device),
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
 	.suspend = wrap_pnp_suspend_usb_device,
 	.resume = wrap_pnp_resume_usb_device,
-#endif
 };
 #endif
 
@@ -650,7 +636,7 @@ static void register_devices(void)
 		wrap_pci_driver.name = NULL;
 	}
 
-#ifdef CONFIG_USB
+#ifdef ENABLE_USB
 	res = usb_register(&wrap_usb_driver);
 	if (res < 0) {
 		ERROR("couldn't register usb driver: %d", res);
@@ -675,7 +661,7 @@ static void unregister_devices(void)
 
 	if (wrap_pci_driver.name)
 		pci_unregister_driver(&wrap_pci_driver);
-#ifdef CONFIG_USB
+#ifdef ENABLE_USB
 	if (wrap_usb_driver.name)
 		usb_deregister(&wrap_usb_driver);
 #endif
@@ -712,11 +698,7 @@ struct wrap_device *load_wrap_device(struct load_device *load_device)
 			EXIT1(return NULL);
 		}
 		INIT_COMPLETION(loader_complete);
-		ret = call_usermodehelper("/sbin/loadndisdriver", argv, env
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-					  , 1
-#endif
-			);
+		ret = call_usermodehelper("/sbin/loadndisdriver", argv, env, 1);
 		if (ret) {
 			up(&loader_mutex);
 			TRACE1("couldn't load device %04x:%04x; check system "
@@ -775,14 +757,14 @@ static int wrapper_ioctl(struct inode *inode, struct file *file,
 	struct load_device load_device;
 	struct load_driver_file load_bin_file;
 	int ret;
+	void __user *addr = (void __user *)arg;
 
 	ENTER1("cmd: %u", cmd);
 
 	ret = 0;
 	switch (cmd) {
 	case WRAP_IOCTL_LOAD_DEVICE:
-		if (copy_from_user(&load_device, (void *)arg,
-				   sizeof(load_device))) {
+		if (copy_from_user(&load_device, addr, sizeof(load_device))) {
 			ret = -EFAULT;
 			break;
 		}
@@ -814,22 +796,20 @@ static int wrapper_ioctl(struct inode *inode, struct file *file,
 			ret = -EINVAL;
 		break;
 	case WRAP_IOCTL_LOAD_DRIVER:
-		TRACE1("loading driver at %p", (void *)arg);
+		TRACE1("loading driver at %p", addr);
 		load_driver = vmalloc(sizeof(*load_driver));
 		if (!load_driver) {
 			ret = -ENOMEM;
 			break;
 		}
-		if (copy_from_user(load_driver, (void *)arg,
-				   sizeof(*load_driver)))
+		if (copy_from_user(load_driver, addr, sizeof(*load_driver)))
 			ret = -EFAULT;
 		else
 			ret = load_user_space_driver(load_driver);
 		vfree(load_driver);
 		break;
 	case WRAP_IOCTL_LOAD_BIN_FILE:
-		if (copy_from_user(&load_bin_file, (void *)arg,
-				   sizeof(load_bin_file)))
+		if (copy_from_user(&load_bin_file, addr, sizeof(load_bin_file)))
 			ret = -EFAULT;
 		else
 			ret = add_bin_file(&load_bin_file);

@@ -121,7 +121,7 @@
 #define wfastcall
 #define noregparm
 
-#define KI_USER_SHARED_DATA 0xfffff78000000000
+#define KI_USER_SHARED_DATA 0xfffff78000000000UL
 
 #else
 
@@ -460,6 +460,7 @@ struct nt_thread {
 	struct task_struct *task;
 	struct nt_list irps;
 	NT_SPIN_LOCK lock;
+	KPRIORITY prio;
 };
 
 #define set_object_type(dh, type)	((dh)->type = (type))
@@ -1010,9 +1011,6 @@ struct wrap_urb {
 	struct irp *irp;
 #ifdef USB_DEBUG
 	unsigned int id;
-#endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
-	typeof(((struct urb *)0)->status) urb_status;
 #endif
 };
 
