@@ -1,13 +1,13 @@
 # Name of the module
 MODNAME = ndiswrapper
 
-DISTFILES = divdi3.c hal.c iw_ndis.c iw_ndis.h loader.c loader.h \
-		longlong.h Makefile crt.c ndis.c ndis.h \
-		ndiswrapper.h ntoskernel.c ntoskernel.h ntoskernel_io.c \
-		pe_linker.c pe_linker.h pnp.c pnp.h proc.c rtl.c usb.c usb.h \
-		winnt_types.h workqueue.c wrapmem.h wrapmem.c wrapper.c \
-		wrapndis.h wrapndis.c lin2win.h win2lin_stubs.S \
-		mkexport.sh mkstub.sh
+DISTFILES = \
+	Makefile crt.c divdi3.c hal.c iw_ndis.c iw_ndis.h lin2win.h loader.c \
+	loader.h longlong.h mkexport.sh mkstubs.sh ndis.c ndis.h \
+	ndiswrapper.h ntoskernel.c ntoskernel.h ntoskernel_io.c pe_linker.c \
+	pe_linker.h pnp.c pnp.h proc.c rtl.c usb.c usb.h vsnprintf.c \
+	vsnprintf.h win2lin_stubs.S winnt_types.h workqueue.c wrapmem.h \
+	wrapmem.c wrapper.c wrapndis.h wrapndis.c
 
 # By default, we try to compile the modules for the currently running
 # kernel.  But it's the first approximation, as we will re-read the
@@ -18,11 +18,6 @@ KVERS ?= $(shell uname -r)
 # same as the kernel source tree, except when the kernel was compiled in
 # a separate directory.
 KBUILD ?= $(shell readlink -f /lib/modules/$(KVERS)/build)
-
-# Some old kernels only install the "source" link
-ifeq (,$(KBUILD))
-KBUILD := $(shell readlink -f /lib/modules/$(KVERS)/source)
-endif
 
 ifeq (,$(KBUILD))
 $(error Kernel tree not found - please set KBUILD to configured kernel)
@@ -41,15 +36,6 @@ endif
 
 KVERS := $(shell sed -ne 's/"//g;s/^\#define UTS_RELEASE //p' $(VERSION_H))
 
-# distros use different paths for kernel include files
-
-KSRC ?= $(shell if \
-	[ -f /lib/modules/$(KVERS)/source/include/linux/kernel.h ]; then \
-		echo /lib/modules/$(KVERS)/source ; \
-	else \
-		echo $(KBUILD); \
-	fi)
-
 ifdef DIST_DESTDIR
 DESTDIR = $(DIST_DESTDIR)
 else
@@ -65,10 +51,6 @@ ifeq (,$(wildcard $(KCONFIG)))
 $(error No .config found in $(KBUILD), please set KBUILD to configured kernel)
 endif
 include $(KBUILD)/.config
-
-EXTRA_CFLAGS += $(shell [ -f $(KSRC)/include/linux/modversions.h ] && \
-		  echo -DEXPORT_SYMTAB -DMODVERSIONS \
-		  -include $(KSRC)/include/linux/modversions.h)
 
 # returns of structs and unions in registers when possible, like Windows 
 EXTRA_CFLAGS += -freg-struct-return
@@ -123,15 +105,6 @@ STUB_SRCS = crt.c hal.c ndis.c ntoskernel.c ntoskernel_io.c \
 	pnp.c rtl.c wrapndis.c
 
 
-# Disable USB support and use own workqueue code if GPL-only symbols
-# are not available
-ifneq (,$(shell grep -s -A1 '"$(MODNAME)"' $(KSRC)/kernel/module.c | \
-			grep 'add_taint_module'))
-$(warning GPL-only symbols not available, disabling USB support)
-WRAP_WQ = 1
-DISABLE_USB = 1
-endif
-
 # By default, USB layer is compiled in if USB support is in kernel;
 # to disable USB support in ndiswrapper even if USB support is in kenrel,
 # add option "DISABLE_USB=1"
@@ -176,7 +149,7 @@ $(obj)/win2lin_stubs.h: $(addprefix $(src)/,$(STUB_SRCS)) FORCE
 	$(call if_changed,mkstubs)
 
 extra-y += win2lin_stubs.h
-OBJS += win2lin_stubs.o
+OBJS += win2lin_stubs.o vsnprintf.o
 else
 OBJS += divdi3.o
 endif
@@ -193,14 +166,6 @@ config_check:
 		echo "Cannot find kernel build files in $(KBUILD)"; \
 		echo "Please give the path to kernel build directory with" ; \
 		echo "the KBUILD=<path> argument to make";\
-		echo; echo; \
-		exit 1; \
-	fi
-	@if [ ! -f $(KSRC)/include/linux/kernel.h ]; then \
-		echo; echo; \
-		echo "Cannot find kernel source files in $(KSRC)"; \
-		echo "Please give the path to kernel source directory with"; \
-		echo "the KSRC=<path> argument to make"; \
 		echo; echo; \
 		exit 1; \
 	fi
