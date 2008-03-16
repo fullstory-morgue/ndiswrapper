@@ -1,12 +1,12 @@
-ndiswrapper (1.52+svn20080313.r2642-1) UNRELEASED; urgency=low
+ndiswrapper (1.52+svn20080316.r2646-1) UNRELEASED; urgency=low
 
-  * (NOT RELEASED YET) New upstream release
+  * (NOT RELEASED YET) New upstream release.
   * Include driver/*.sh in debianized ndiswrapper module tarball.
   * The distclean Makefile target no longer exists, use clean instead.
   * No longer need to define KSRC in debian/rules/modules, upstream Makefile
     requires only the KBUILD variable.
 
- -- Kel Modderman <kel@otaku42.de>  Thu, 13 Mar 2008 15:20:25 +1000
+ -- Kel Modderman <kel@otaku42.de>  Sun, 16 Mar 2008 21:34:22 +1000
 
 ndiswrapper (1.52-1) unstable; urgency=low
 
