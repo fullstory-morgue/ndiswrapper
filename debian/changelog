@@ -5,8 +5,15 @@ ndiswrapper (1.52+svn20080316.r2646-1) UNRELEASED; urgency=low
   * The distclean Makefile target no longer exists, use clean instead.
   * No longer need to define KSRC in debian/rules/modules, upstream Makefile
     requires only the KBUILD variable.
+  * Major behaviour change in ndiswrapper-common wrappers for loadndisdriver
+    and ndiswrapper utils:
+    - check required utils_version attribute of currently installed
+      ndiswrapper kernel module, use this version instead of latest version if
+      called interactively
+    - fallback to detection of latest API version when the information cannot
+      be determined from the kernel module (not yet installed)
 
- -- Kel Modderman <kel@otaku42.de>  Sun, 16 Mar 2008 21:34:22 +1000
+ -- Kel Modderman <kel@otaku42.de>  Tue, 18 Mar 2008 08:30:00 +1000
 
 ndiswrapper (1.52-1) unstable; urgency=low
 
