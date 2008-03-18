@@ -11,7 +11,7 @@ utils_version() {
 		echo ${1}-${UTILS_VERSION}
 	else
 		for file in ${1}-[\.0-9][\.0-9]*; do
-			echo ${file}
+			[ -x "${file}" ] && echo ${file}
 		done | sort -n -t - -k 2 | tail -1
 	fi
 }
