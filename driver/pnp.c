@@ -18,6 +18,12 @@
 #include "wrapndis.h"
 #include "loader.h"
 
+/* Functions callable from the NDIS driver */
+wstdcall NTSTATUS pdoDispatchDeviceControl(struct device_object *pdo,
+					   struct irp *irp);
+wstdcall NTSTATUS pdoDispatchPnp(struct device_object *pdo, struct irp *irp);
+wstdcall NTSTATUS pdoDispatchPower(struct device_object *pdo, struct irp *irp);
+
 static NTSTATUS start_pdo(struct device_object *pdo)
 {
 	int i, ret, count, resources_size;
@@ -184,8 +190,8 @@ static void remove_pdo(struct device_object *pdo)
 	return;
 }
 
-wstdcall NTSTATUS IoSendIrpTopDev(struct device_object *dev_obj, ULONG major_fn,
-				 ULONG minor_fn, struct io_stack_location *sl)
+static NTSTATUS IoSendIrpTopDev(struct device_object *dev_obj, ULONG major_fn,
+				ULONG minor_fn, struct io_stack_location *sl)
 {
 	NTSTATUS status;
 	struct nt_event event;
@@ -378,8 +384,8 @@ wstdcall NTSTATUS pdoDispatchPower(struct device_object *pdo, struct irp *irp)
 }
 WIN_FUNC_DECL(pdoDispatchPower,2)
 
-NTSTATUS pnp_set_device_power_state(struct wrap_device *wd,
-				    enum device_power_state state)
+static NTSTATUS pnp_set_device_power_state(struct wrap_device *wd,
+					   enum device_power_state state)
 {
 	NTSTATUS status;
 	struct device_object *pdo;

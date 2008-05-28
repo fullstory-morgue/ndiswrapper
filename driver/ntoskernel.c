@@ -18,6 +18,7 @@
 #include "usb.h"
 #include "pnp.h"
 #include "loader.h"
+#include "ntoskernel_exports.h"
 
 /* MDLs describe a range of virtual address with an array of physical
  * pages right after the header. For different ranges of virtual
@@ -67,8 +68,6 @@ static void ntos_work_worker(worker_param_t dummy);
 static struct nt_thread *ntos_worker_thread;
 spinlock_t irp_cancel_lock;
 static NT_SPIN_LOCK nt_list_lock;
-
-extern struct nt_list wrap_drivers;
 static struct nt_slist wrap_timer_slist;
 
 /* compute ticks (100ns) since 1601 until when system booted into
@@ -1443,7 +1442,7 @@ struct nt_thread *get_current_nt_thread(void)
 	return thread;
 }
 
-struct task_struct *get_nt_thread_task(struct nt_thread *thread)
+static struct task_struct *get_nt_thread_task(struct nt_thread *thread)
 {
 	struct task_struct *task;
 	struct common_object_header *header;
@@ -1957,7 +1956,7 @@ wfastcall LONG WIN_FUNC(ObfReferenceObject,1)
 	return ret;
 }
 
-int dereference_object(void *object)
+static int dereference_object(void *object)
 {
 	struct common_object_header *hdr;
 	int ref_count;
@@ -2436,19 +2435,17 @@ wstdcall void WIN_FUNC(__C_specific_handler,0)
 	TODO();
 }
 
-void WIN_FUNC(_purecall,0)
+wstdcall void WIN_FUNC(_purecall,0)
 	(void)
 {
 	TODO();
 }
 
-void WIN_FUNC(__chkstk,0)
+wstdcall void WIN_FUNC(__chkstk,0)
 	(void)
 {
 	TODO();
 }
-
-#include "ntoskernel_exports.h"
 
 struct worker_init_struct {
 	work_struct_t work;
