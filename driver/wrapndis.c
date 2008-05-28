@@ -23,10 +23,13 @@
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <linux/in.h>
+#include "wrapper.h"
 
-extern char *if_name;
-extern int hangcheck_interval;
-extern spinlock_t ntoskernel_lock;
+/* Functions callable from the NDIS driver */
+wstdcall NTSTATUS NdisDispatchDeviceControl(struct device_object *fdo,
+					    struct irp *irp);
+wstdcall NTSTATUS NdisDispatchPnp(struct device_object *fdo, struct irp *irp);
+wstdcall NTSTATUS NdisDispatchPower(struct device_object *fdo, struct irp *irp);
 
 workqueue_struct_t *wrapndis_wq;
 static struct nt_thread *wrapndis_worker_thread;
@@ -265,7 +268,8 @@ static void mp_halt(struct ndis_device *wnd)
 	    wrap_is_pci_bus(wnd->wd->dev_bus)) {
 		up(&wnd->ndis_req_mutex);
 		disassociate(wnd, 0);
-		down_interruptible(&wnd->ndis_req_mutex);
+		if (down_interruptible(&wnd->ndis_req_mutex))
+			WARNING("couldn't obtain ndis_req_mutex");
 	}
 	mp = &wnd->wd->driver->ndis_driver->mp;
 	TRACE1("halt: %p", mp->mp_halt);
@@ -1907,7 +1911,8 @@ static int ndis_remove_device(struct ndis_device *wnd)
 	netif_carrier_off(wnd->net_dev);
 	/* if device is suspended, but resume failed, tx_ring_mutex
 	 * may already be locked */
-	down_trylock(&wnd->tx_ring_mutex);
+	if (down_trylock(&wnd->tx_ring_mutex))
+		WARNING("couldn't obtain tx_ring_mutex");
 	spin_lock_bh(&wnd->tx_ring_lock);
 	tx_pending = wnd->tx_ring_end - wnd->tx_ring_start;
 	if (tx_pending < 0)
